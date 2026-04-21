@@ -467,6 +467,22 @@ def ensure_dw_cube_tables(
     )
     cursor.execute(
         """
+        IF OBJECT_ID(N'dbo.agg_sales_city_day', N'U') IS NULL
+        BEGIN
+            CREATE TABLE dbo.agg_sales_city_day (
+                city_key INT NOT NULL,
+                year INT NOT NULL,
+                month INT NOT NULL,
+                day INT NOT NULL,
+                total_quantity INT NOT NULL,
+                total_sales DECIMAL(18,2) NOT NULL,
+                PRIMARY KEY (city_key, year, month, day)
+            )
+        END
+        """
+    )
+    cursor.execute(
+        """
         IF OBJECT_ID(N'dbo.agg_sales_product_month', N'U') IS NULL
         BEGIN
             CREATE TABLE dbo.agg_sales_product_month (
@@ -589,6 +605,36 @@ def load_dw_cube_data(
         WHEN NOT MATCHED THEN
             INSERT (product_key, year, month, total_quantity, total_sales)
             VALUES (S.product_key, S.year, S.month, S.total_quantity, S.total_sales);
+        """
+    )
+    cursor.execute(
+        """
+        MERGE dbo.agg_sales_city_day AS T
+        USING (
+            SELECT
+                c.city_key,
+                t.year,
+                t.month,
+                t.day,
+                SUM(f.so_luong_dat) AS total_quantity,
+                SUM(f.tong_tien) AS total_sales
+            FROM dbo.fact_don_hang f
+            JOIN dbo.dim_thoi_gian t ON f.date_key = t.date_key
+            JOIN dbo.dim_cua_hang s ON f.store_key = s.store_key
+            JOIN dbo.dim_thanh_pho c ON s.city_key = c.city_key
+            GROUP BY c.city_key, t.year, t.month, t.day
+        ) AS S
+        ON T.city_key = S.city_key
+           AND T.year = S.year
+           AND T.month = S.month
+           AND T.day = S.day
+        WHEN MATCHED THEN
+            UPDATE SET
+                T.total_quantity = S.total_quantity,
+                T.total_sales = S.total_sales
+        WHEN NOT MATCHED THEN
+            INSERT (city_key, year, month, day, total_quantity, total_sales)
+            VALUES (S.city_key, S.year, S.month, S.day, S.total_quantity, S.total_sales);
         """
     )
 

@@ -1,5 +1,6 @@
 import signal
 import time
+from typing import Optional
 from collections import defaultdict
 
 import pymssql
@@ -68,59 +69,56 @@ def read_root() -> str:
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>OLAP Demo Dashboard</title>
+  <title>Cube Q&A Dashboard</title>
   <style>
-    body { font-family: Arial, sans-serif; margin: 20px; background: #f5f7fb; }
-    .panel { background: white; border-radius: 10px; padding: 16px; margin-bottom: 12px; box-shadow: 0 2px 8px rgba(0,0,0,.06); }
+    :root {
+      --bg: #f8fafc;
+      --card: #ffffff;
+      --line: #e2e8f0;
+      --text: #0f172a;
+      --muted: #475569;
+      --primary: #2563eb;
+      --secondary: #475569;
+    }
+    body { font-family: Arial, sans-serif; margin: 20px; background: var(--bg); color: var(--text); }
+    .panel { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin-bottom: 14px; box-shadow: 0 2px 8px rgba(15,23,42,.05); }
     .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
-    select, input, button { padding: 8px; border: 1px solid #d0d7de; border-radius: 8px; }
-    button { cursor: pointer; background: #2563eb; color: white; border: none; }
-    button.secondary { background: #64748b; }
-    .table-wrap { margin-top: 12px; border: 1px solid #e2e8f0; border-radius: 12px; overflow: auto; max-height: 65vh; background: #fff; }
+    select, input, button { padding: 8px 10px; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 14px; }
+    input, select { background: #fff; min-width: 160px; }
+    button { cursor: pointer; background: var(--primary); color: #fff; border: none; }
+    button.secondary { background: var(--secondary); }
+    button:disabled { opacity: .65; cursor: not-allowed; }
+    .q-grid { display: grid; gap: 8px; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); }
+    .q-btn { text-align: left; line-height: 1.35; padding: 10px 12px; }
+    .q-btn.active { outline: 2px solid #93c5fd; background: #1d4ed8; }
+    .table-wrap { margin-top: 12px; border: 1px solid var(--line); border-radius: 12px; overflow: auto; max-height: 66vh; background: #fff; }
     table { width: 100%; border-collapse: separate; border-spacing: 0; min-width: 900px; }
     th, td { border-bottom: 1px solid #e5e7eb; padding: 10px 12px; text-align: left; font-size: 14px; }
     th { background: #f1f5f9; position: sticky; top: 0; z-index: 1; }
     tbody tr:nth-child(even) td { background: #fafcff; }
     tbody tr:hover td { background: #eef6ff; }
     td.num { text-align: right; font-variant-numeric: tabular-nums; }
-    .pivot-badge { display: inline-block; padding: 4px 10px; border-radius: 999px; background: #dbeafe; color: #1e40af; font-size: 12px; margin-left: 8px; }
-    .pivot-table th { background: linear-gradient(180deg, #1e3a8a, #1d4ed8); color: #fff; border-bottom-color: #1d4ed8; }
-    .pivot-row-key { font-weight: 600; color: #0f172a; background: #f8fafc !important; }
-    .muted { color: #475569; font-size: 14px; }
+    .muted { color: var(--muted); font-size: 13px; }
+    .badge { display: inline-block; padding: 4px 8px; border-radius: 999px; background: #dbeafe; color: #1e40af; font-size: 12px; margin-left: 6px; }
   </style>
 </head>
 <body>
-  <h2>OLAP Demo Dashboard</h2>
+  <h2>Cube Q&A Dashboard</h2>
   <div class="panel">
     <div class="row">
-      <label>Cube:</label>
-      <select id="cubeType">
-        <option value="sales">Sales Cube</option>
-        <option value="inventory">Inventory Cube</option>
-      </select>
+      <label>Data source:</label>
+      <span class="badge">4 aggregate cube tables</span>
       <button onclick="refreshCube()">Refresh Cube Data</button>
     </div>
+    <p class="muted">Click a question below to run immediately. Fill optional filters then click Run Selected Question.</p>
   </div>
 
   <div class="panel">
-    <div class="row">
-      <label>Time Level:</label>
-      <select id="timeLevel">
-        <option value="year">Year</option>
-        <option value="month">Month</option>
-        <option value="day">Day</option>
-      </select>
-      <button class="secondary" onclick="drillDown()">Drill Down</button>
-      <button class="secondary" onclick="rollUp()">Roll Up</button>
+    <div class="q-grid" id="questionGrid"></div>
+    <div class="row" id="dynamicFilters" style="margin-top:12px;">
+      <button onclick="runSelectedQuestion()">Run Selected Question</button>
     </div>
-    <div class="row" style="margin-top:10px;">
-      <input id="city" placeholder="Thanh pho (slice)" />
-      <input id="product" placeholder="San pham (dice)" />
-      <input id="customer" placeholder="Khach hang (dice)" />
-      <button onclick="loadData()">Apply Slice / Dice</button>
-      <button class="secondary" onclick="togglePivot()">Pivot</button>
-    </div>
-    <p class="muted">Flow: Sales theo Year -> Drill Down -> Slice city -> Dice product -> Pivot.</p>
+    <p class="muted">Q2, Q5, Q8 and Q9 use cube-oriented approximations because aggregate tables do not store full order-line details.</p>
   </div>
 
   <div class="panel">
@@ -142,48 +140,417 @@ def read_root() -> str:
   </div>
 
 <script>
-let pivot = false;
-let levels = ["year", "month", "day"];
+const QUESTIONS = [
+  "1) Find stores with city/state/phone plus sold products (description, size, weight, list price).",
+  "2) Find customer orders with customer name and order date (cube approximation by customer + month).",
+  "3) Find stores (with city/phone and order date) selling a product ordered by a specific customer.",
+  "4) Find representative-office address, city, state for stores holding a product above a given inventory level.",
+  "5) For each customer order, list products with store code, city and stores that can sell those products (cube approximation).",
+  "6) Find city and state where a given customer lives.",
+  "7) Find inventory level of a specific product across all stores in a specific city.",
+  "8) Find products, ordered quantity, customer, store and city of an order (cube approximation by customer/product).",
+  "9) Find travel customers, postal customers and customers belonging to both types.",
+  "10) (agg_sales_city_day) How does sales change over time.",
+  "11) (agg_sales_city_month) Thanh pho nao co doanh thu cao nhat theo tung thang.",
+  "12) (agg_sales_product_month) San pham nao ban chay theo thoi gian.",
+  "13) (agg_inventory_city_product) Thanh pho nao dang ton kho cao nhat.",
+  "14) (agg_inventory_store_product) Cua hang nao dang ton kho cao nhat."
+];
+
+let selectedQuestion = 1;
 let currentPage = 1;
 let currentTotalPages = 1;
+const TIME_LEVEL_ORDER = ["year", "month", "day"];
+let q10CurrentLevel = "year";
+let q10PendingOperation = "slice_dice";
+let q11CurrentLevel = "year";
+let q11PendingOperation = "slice_dice";
+let q12CurrentLevel = "year";
+let q12PendingOperation = "slice_dice";
+let q13CurrentLevel = "year";
+let q13PendingOperation = "slice_dice";
+let q14CurrentLevel = "year";
+let q14PendingOperation = "slice_dice";
+const FILTER_FIELDS = {
+  store_code: {
+    label: "Store code",
+    placeholder: "Store code (e.g. CH001)",
+    type: "text",
+  },
+  customer_code: {
+    label: "Customer code",
+    placeholder: "Customer code (e.g. KH001)",
+    type: "text",
+  },
+  order_code: {
+    label: "Order code",
+    placeholder: "Order code (e.g. DH001)",
+    type: "text",
+  },
+  product_code: {
+    label: "Product code",
+    placeholder: "Product code (e.g. MH001)",
+    type: "text",
+  },
+  city_name: {
+    label: "City name",
+    placeholder: "City name",
+    type: "text",
+  },
+  min_inventory: {
+    label: "Min inventory",
+    placeholder: "Min inventory (Q4)",
+    type: "number",
+    min: "0",
+  },
+  customer_type: {
+    label: "Customer type",
+    type: "select",
+    options: [
+      { value: "", text: "All customer types" },
+      { value: "buu_dien", text: "buu_dien" },
+      { value: "du_lich", text: "du_lich" },
+      { value: "ca_hai", text: "ca_hai" },
+    ],
+  },
+  olap_operation: {
+    label: "OLAP operation",
+    type: "select",
+    options: [
+      { value: "roll_up", text: "roll up" },
+      { value: "drill_down", text: "drill down" },
+      { value: "slice_dice", text: "slice & dice" },
+      { value: "pivot", text: "pivot" },
+    ],
+  },
+  time_level: {
+    label: "Time level",
+    type: "select",
+    options: [
+      { value: "year", text: "year" },
+      { value: "month", text: "month" },
+      { value: "day", text: "day" },
+    ],
+  },
+};
+const QUESTION_FILTERS = {
+  1: ["store_code", "city_name", "product_code"],
+  2: ["customer_code", "order_code"],
+  3: ["customer_code", "product_code"],
+  4: ["min_inventory", "product_code"],
+  5: ["customer_code", "order_code", "product_code"],
+  6: ["customer_code"],
+  7: ["city_name", "product_code"],
+  8: ["customer_code", "order_code", "product_code"],
+  9: ["customer_type"],
+  10: ["olap_operation", "time_level", "city_name"],
+  11: ["olap_operation", "time_level", "city_name"],
+  12: ["olap_operation", "time_level", "product_code"],
+  13: ["olap_operation", "city_name", "product_code"],
+  14: ["olap_operation", "store_code", "product_code"],
+};
 
-function drillDown() {
-  const el = document.getElementById("timeLevel");
-  let idx = levels.indexOf(el.value);
-  if (idx < levels.length - 1) el.value = levels[idx + 1];
-  loadData();
+function initQuestionButtons() {
+  const host = document.getElementById("questionGrid");
+  host.innerHTML = QUESTIONS.map((q, i) => (
+    `<button class="q-btn ${i === 0 ? "active" : ""}" id="qbtn-${i + 1}" onclick="quickRun(${i + 1})">${q}</button>`
+  )).join("");
 }
 
-function rollUp() {
-  const el = document.getElementById("timeLevel");
-  let idx = levels.indexOf(el.value);
-  if (idx > 0) el.value = levels[idx - 1];
-  loadData();
-}
-
-function togglePivot() {
-  pivot = !pivot;
+function setSelectedQuestion(qid) {
+  selectedQuestion = qid;
+  if (qid === 10) {
+    q10CurrentLevel = "year";
+    q10PendingOperation = "slice_dice";
+  }
+  if (qid === 11) {
+    q11CurrentLevel = "year";
+    q11PendingOperation = "slice_dice";
+  }
+  if (qid === 12) {
+    q12CurrentLevel = "year";
+    q12PendingOperation = "slice_dice";
+  }
+  if (qid === 13) {
+    q13CurrentLevel = "year";
+    q13PendingOperation = "slice_dice";
+  }
+  if (qid === 14) {
+    q14CurrentLevel = "year";
+    q14PendingOperation = "slice_dice";
+  }
+  for (let i = 1; i <= QUESTIONS.length; i++) {
+    document.getElementById(`qbtn-${i}`).classList.toggle("active", i === qid);
+  }
+  renderFiltersForQuestion();
   currentPage = 1;
-  loadData();
+}
+
+function quickRun(qid) {
+  setSelectedQuestion(qid);
+  runSelectedQuestion();
 }
 
 function prevPage() {
   if (currentPage > 1) {
     currentPage -= 1;
-    loadData();
+    runSelectedQuestion();
   }
 }
 
 function nextPage() {
   if (currentPage < currentTotalPages) {
     currentPage += 1;
-    loadData();
+    runSelectedQuestion();
   }
 }
 
 function changePageSize() {
   currentPage = 1;
-  loadData();
+  runSelectedQuestion();
+}
+
+function renderFiltersForQuestion() {
+  const host = document.getElementById("dynamicFilters");
+  const filterKeys = QUESTION_FILTERS[selectedQuestion] || [];
+  if (selectedQuestion === 10) {
+    const q10FilterKeys = filterKeys.filter((key) => key === "city_name");
+    const q10InputsHtml = q10FilterKeys.map((key) => {
+      const cfg = FILTER_FIELDS[key];
+      if (!cfg) {
+        return "";
+      }
+      return `<input data-filter-key="${key}" type="${cfg.type}" placeholder="${cfg.placeholder}" />`;
+    }).join("");
+    const canDrillDown = q10CurrentLevel !== "day";
+    const canRollUp = q10CurrentLevel !== "year";
+    host.innerHTML = `
+      ${q10InputsHtml}
+      <span class="muted">Current level: <b>${q10CurrentLevel}</b></span>
+      <button class="secondary" onclick="runQ10AtCurrentLevel()">Run</button>
+      <button onclick="runQ10DrillDown()" ${canDrillDown ? "" : "disabled"}>Drill down</button>
+      <button onclick="runQ10RollUp()" ${canRollUp ? "" : "disabled"}>Roll up</button>
+    `;
+    return;
+  }
+  if (selectedQuestion === 11) {
+    const q11FilterKeys = filterKeys.filter((key) => key === "city_name");
+    const q11InputsHtml = q11FilterKeys.map((key) => {
+      const cfg = FILTER_FIELDS[key];
+      if (!cfg) {
+        return "";
+      }
+      return `<input data-filter-key="${key}" type="${cfg.type}" placeholder="${cfg.placeholder}" />`;
+    }).join("");
+    const canDrillDown = q11CurrentLevel !== "day";
+    const canRollUp = q11CurrentLevel !== "year";
+    host.innerHTML = `
+      ${q11InputsHtml}
+      <span class="muted">Current level: <b>${q11CurrentLevel}</b></span>
+      <button class="secondary" onclick="runQ11AtCurrentLevel()">Run</button>
+      <button onclick="runQ11DrillDown()" ${canDrillDown ? "" : "disabled"}>Drill down</button>
+      <button onclick="runQ11RollUp()" ${canRollUp ? "" : "disabled"}>Roll up</button>
+    `;
+    return;
+  }
+  if (selectedQuestion === 12) {
+    const q12FilterKeys = filterKeys.filter((key) => key === "product_code");
+    const q12InputsHtml = q12FilterKeys.map((key) => {
+      const cfg = FILTER_FIELDS[key];
+      if (!cfg) {
+        return "";
+      }
+      return `<input data-filter-key="${key}" type="${cfg.type}" placeholder="${cfg.placeholder}" />`;
+    }).join("");
+    const canDrillDown = q12CurrentLevel !== "day";
+    const canRollUp = q12CurrentLevel !== "year";
+    host.innerHTML = `
+      ${q12InputsHtml}
+      <span class="muted">Current level: <b>${q12CurrentLevel}</b></span>
+      <button class="secondary" onclick="runQ12AtCurrentLevel()">Run</button>
+      <button onclick="runQ12DrillDown()" ${canDrillDown ? "" : "disabled"}>Drill down</button>
+      <button onclick="runQ12RollUp()" ${canRollUp ? "" : "disabled"}>Roll up</button>
+    `;
+    return;
+  }
+  if (selectedQuestion === 13) {
+    const q13FilterKeys = filterKeys.filter((key) => key === "city_name" || key === "product_code");
+    const q13InputsHtml = q13FilterKeys.map((key) => {
+      const cfg = FILTER_FIELDS[key];
+      if (!cfg) {
+        return "";
+      }
+      return `<input data-filter-key="${key}" type="${cfg.type}" placeholder="${cfg.placeholder}" />`;
+    }).join("");
+    const canDrillDown = q13CurrentLevel !== "day";
+    const canRollUp = q13CurrentLevel !== "year";
+    host.innerHTML = `
+      ${q13InputsHtml}
+      <span class="muted">Current level: <b>${q13CurrentLevel}</b></span>
+      <button class="secondary" onclick="runQ13AtCurrentLevel()">Run</button>
+      <button onclick="runQ13DrillDown()" ${canDrillDown ? "" : "disabled"}>Drill down</button>
+      <button onclick="runQ13RollUp()" ${canRollUp ? "" : "disabled"}>Roll up</button>
+    `;
+    return;
+  }
+  if (selectedQuestion === 14) {
+    const q14FilterKeys = filterKeys.filter((key) => key === "store_code" || key === "product_code");
+    const q14InputsHtml = q14FilterKeys.map((key) => {
+      const cfg = FILTER_FIELDS[key];
+      if (!cfg) {
+        return "";
+      }
+      return `<input data-filter-key="${key}" type="${cfg.type}" placeholder="${cfg.placeholder}" />`;
+    }).join("");
+    const canDrillDown = q14CurrentLevel !== "day";
+    const canRollUp = q14CurrentLevel !== "year";
+    host.innerHTML = `
+      ${q14InputsHtml}
+      <span class="muted">Current level: <b>${q14CurrentLevel}</b></span>
+      <button class="secondary" onclick="runQ14AtCurrentLevel()">Run</button>
+      <button onclick="runQ14DrillDown()" ${canDrillDown ? "" : "disabled"}>Drill down</button>
+      <button onclick="runQ14RollUp()" ${canRollUp ? "" : "disabled"}>Roll up</button>
+    `;
+    return;
+  }
+  const inputsHtml = filterKeys.map((key) => {
+    const cfg = FILTER_FIELDS[key];
+    if (!cfg) {
+      return "";
+    }
+    if (cfg.type === "select") {
+      const optionsHtml = (cfg.options || []).map(
+        (opt) => `<option value="${opt.value}">${opt.text}</option>`
+      ).join("");
+      return `<select data-filter-key="${key}">${optionsHtml}</select>`;
+    }
+    const minAttr = cfg.min ? ` min="${cfg.min}"` : "";
+    return `<input data-filter-key="${key}" type="${cfg.type}" placeholder="${cfg.placeholder}"${minAttr} />`;
+  }).join("");
+  const hint = filterKeys.length
+    ? ""
+    : '<span class="muted">Question nay khong yeu cau bo loc dau vao.</span>';
+  host.innerHTML = `${inputsHtml}${hint}<button onclick="runSelectedQuestion()">Run Selected Question</button>`;
+}
+
+function runQ10AtCurrentLevel() {
+  q10PendingOperation = "slice_dice";
+  currentPage = 1;
+  runSelectedQuestion();
+}
+
+function runQ10DrillDown() {
+  if (q10CurrentLevel === "day") {
+    return;
+  }
+  q10PendingOperation = "drill_down";
+  currentPage = 1;
+  runSelectedQuestion();
+}
+
+function runQ10RollUp() {
+  if (q10CurrentLevel === "year") {
+    return;
+  }
+  q10PendingOperation = "roll_up";
+  currentPage = 1;
+  runSelectedQuestion();
+}
+
+function runQ11AtCurrentLevel() {
+  q11PendingOperation = "slice_dice";
+  currentPage = 1;
+  runSelectedQuestion();
+}
+
+function runQ11DrillDown() {
+  if (q11CurrentLevel === "day") {
+    return;
+  }
+  q11PendingOperation = "drill_down";
+  currentPage = 1;
+  runSelectedQuestion();
+}
+
+function runQ11RollUp() {
+  if (q11CurrentLevel === "year") {
+    return;
+  }
+  q11PendingOperation = "roll_up";
+  currentPage = 1;
+  runSelectedQuestion();
+}
+
+function runQ12AtCurrentLevel() {
+  q12PendingOperation = "slice_dice";
+  currentPage = 1;
+  runSelectedQuestion();
+}
+
+function runQ12DrillDown() {
+  if (q12CurrentLevel === "day") {
+    return;
+  }
+  q12PendingOperation = "drill_down";
+  currentPage = 1;
+  runSelectedQuestion();
+}
+
+function runQ12RollUp() {
+  if (q12CurrentLevel === "year") {
+    return;
+  }
+  q12PendingOperation = "roll_up";
+  currentPage = 1;
+  runSelectedQuestion();
+}
+
+function runQ13AtCurrentLevel() {
+  q13PendingOperation = "slice_dice";
+  currentPage = 1;
+  runSelectedQuestion();
+}
+
+function runQ13DrillDown() {
+  if (q13CurrentLevel === "day") {
+    return;
+  }
+  q13PendingOperation = "drill_down";
+  currentPage = 1;
+  runSelectedQuestion();
+}
+
+function runQ13RollUp() {
+  if (q13CurrentLevel === "year") {
+    return;
+  }
+  q13PendingOperation = "roll_up";
+  currentPage = 1;
+  runSelectedQuestion();
+}
+
+function runQ14AtCurrentLevel() {
+  q14PendingOperation = "slice_dice";
+  currentPage = 1;
+  runSelectedQuestion();
+}
+
+function runQ14DrillDown() {
+  if (q14CurrentLevel === "day") {
+    return;
+  }
+  q14PendingOperation = "drill_down";
+  currentPage = 1;
+  runSelectedQuestion();
+}
+
+function runQ14RollUp() {
+  if (q14CurrentLevel === "year") {
+    return;
+  }
+  q14PendingOperation = "roll_up";
+  currentPage = 1;
+  runSelectedQuestion();
 }
 
 async function refreshCube() {
@@ -222,42 +589,122 @@ function renderTable(payload) {
   table.innerHTML = html;
 }
 
-async function loadData() {
+function collectFilters() {
+  const filters = {
+    page: String(currentPage),
+    page_size: document.getElementById("pageSize").value,
+  };
+  const inputEls = document.querySelectorAll("#dynamicFilters [data-filter-key]");
+  for (const el of inputEls) {
+    const key = el.getAttribute("data-filter-key");
+    if (!key) {
+      continue;
+    }
+    const value = el.value.trim();
+    if (value !== "") {
+      filters[key] = value;
+    }
+  }
+  if (selectedQuestion === 10) {
+    filters.time_level = q10CurrentLevel;
+    filters.olap_operation = q10PendingOperation;
+  }
+  if (selectedQuestion === 11) {
+    filters.time_level = q11CurrentLevel;
+    filters.olap_operation = q11PendingOperation;
+  }
+  if (selectedQuestion === 12) {
+    filters.time_level = q12CurrentLevel;
+    filters.olap_operation = q12PendingOperation;
+  }
+  if (selectedQuestion === 13) {
+    filters.time_level = q13CurrentLevel;
+    filters.olap_operation = q13PendingOperation;
+  }
+  if (selectedQuestion === 14) {
+    filters.time_level = q14CurrentLevel;
+    filters.olap_operation = q14PendingOperation;
+  }
+  return filters;
+}
+
+async function runSelectedQuestion() {
   try {
-    const cube = document.getElementById("cubeType").value;
-    const level = document.getElementById("timeLevel").value;
-    const city = document.getElementById("city").value;
-    const product = document.getElementById("product").value;
-    const customer = document.getElementById("customer").value;
-    const pageSize = document.getElementById("pageSize").value;
-    const qs = new URLSearchParams({
-      level,
-      pivot: String(pivot),
-      city,
-      product,
-      customer,
-      page: String(currentPage),
-      page_size: String(pageSize)
-    });
-    const res = await fetch(`/api/${cube}?` + qs.toString());
+    const qs = new URLSearchParams(collectFilters());
+    const res = await fetch(`/api/question/${selectedQuestion}?` + qs.toString());
     if (!res.ok) {
       const errText = await res.text();
       throw new Error(`API ${res.status}: ${errText}`);
     }
     const data = await res.json();
+    if (selectedQuestion === 10) {
+      if (q10PendingOperation === "drill_down") {
+        const idx = TIME_LEVEL_ORDER.indexOf(q10CurrentLevel);
+        q10CurrentLevel = TIME_LEVEL_ORDER[Math.min(idx + 1, TIME_LEVEL_ORDER.length - 1)];
+      } else if (q10PendingOperation === "roll_up") {
+        const idx = TIME_LEVEL_ORDER.indexOf(q10CurrentLevel);
+        q10CurrentLevel = TIME_LEVEL_ORDER[Math.max(idx - 1, 0)];
+      }
+      q10PendingOperation = "slice_dice";
+      renderFiltersForQuestion();
+    }
+    if (selectedQuestion === 11) {
+      if (q11PendingOperation === "drill_down") {
+        const idx = TIME_LEVEL_ORDER.indexOf(q11CurrentLevel);
+        q11CurrentLevel = TIME_LEVEL_ORDER[Math.min(idx + 1, TIME_LEVEL_ORDER.length - 1)];
+      } else if (q11PendingOperation === "roll_up") {
+        const idx = TIME_LEVEL_ORDER.indexOf(q11CurrentLevel);
+        q11CurrentLevel = TIME_LEVEL_ORDER[Math.max(idx - 1, 0)];
+      }
+      q11PendingOperation = "slice_dice";
+      renderFiltersForQuestion();
+    }
+    if (selectedQuestion === 12) {
+      if (q12PendingOperation === "drill_down") {
+        const idx = TIME_LEVEL_ORDER.indexOf(q12CurrentLevel);
+        q12CurrentLevel = TIME_LEVEL_ORDER[Math.min(idx + 1, TIME_LEVEL_ORDER.length - 1)];
+      } else if (q12PendingOperation === "roll_up") {
+        const idx = TIME_LEVEL_ORDER.indexOf(q12CurrentLevel);
+        q12CurrentLevel = TIME_LEVEL_ORDER[Math.max(idx - 1, 0)];
+      }
+      q12PendingOperation = "slice_dice";
+      renderFiltersForQuestion();
+    }
+    if (selectedQuestion === 13) {
+      if (q13PendingOperation === "drill_down") {
+        const idx = TIME_LEVEL_ORDER.indexOf(q13CurrentLevel);
+        q13CurrentLevel = TIME_LEVEL_ORDER[Math.min(idx + 1, TIME_LEVEL_ORDER.length - 1)];
+      } else if (q13PendingOperation === "roll_up") {
+        const idx = TIME_LEVEL_ORDER.indexOf(q13CurrentLevel);
+        q13CurrentLevel = TIME_LEVEL_ORDER[Math.max(idx - 1, 0)];
+      }
+      q13PendingOperation = "slice_dice";
+      renderFiltersForQuestion();
+    }
+    if (selectedQuestion === 14) {
+      if (q14PendingOperation === "drill_down") {
+        const idx = TIME_LEVEL_ORDER.indexOf(q14CurrentLevel);
+        q14CurrentLevel = TIME_LEVEL_ORDER[Math.min(idx + 1, TIME_LEVEL_ORDER.length - 1)];
+      } else if (q14PendingOperation === "roll_up") {
+        const idx = TIME_LEVEL_ORDER.indexOf(q14CurrentLevel);
+        q14CurrentLevel = TIME_LEVEL_ORDER[Math.max(idx - 1, 0)];
+      }
+      q14PendingOperation = "slice_dice";
+      renderFiltersForQuestion();
+    }
     currentPage = data.page || currentPage;
     currentTotalPages = data.total_pages || 1;
-    const pivotBadge = pivot ? '<span class="pivot-badge">Pivot Mode</span>' : '';
-    document.getElementById("meta").innerHTML = `<b>${cube.toUpperCase()}</b> | level=${level} | total_rows=${data.total_rows ?? 0} ${pivotBadge}`;
+    document.getElementById("meta").innerHTML = `<b>Question ${selectedQuestion}</b> | total_rows=${data.total_rows ?? 0}`;
     document.getElementById("pageInfo").innerText = `Page ${currentPage}/${currentTotalPages}`;
     renderTable(data);
   } catch (err) {
-    document.getElementById("meta").innerHTML = `<span style="color:#b91c1c;">Loi tai API: ${err.message}</span>`;
+    document.getElementById("meta").innerHTML = `<span style="color:#b91c1c;">API error: ${err.message}</span>`;
     document.getElementById("resultTable").innerHTML = "";
   }
 }
 
-loadData();
+initQuestionButtons();
+runSelectedQuestion();
 </script>
 </body>
 </html>
@@ -429,6 +876,829 @@ def inventory_data(
     }
 
 
+def _to_table_payload(rows: list[dict], page: int, page_size: int) -> dict:
+    total_rows = len(rows)
+    total_pages = (total_rows + page_size - 1) // page_size if total_rows else 1
+    page = min(page, total_pages)
+    start = (page - 1) * page_size
+    end = start + page_size
+    paged_rows = rows[start:end]
+    return {
+        "columns": list(paged_rows[0].keys()) if paged_rows else [],
+        "rows": paged_rows,
+        "page": page,
+        "page_size": page_size,
+        "total_rows": total_rows,
+        "total_pages": total_pages,
+    }
+
+
+@app.get("/api/question/{question_id}")
+def quick_question(
+    question_id: int,
+    customer_code: str = "",
+    order_code: str = "",
+    store_code: str = "",
+    product_code: str = "",
+    city_name: str = "",
+    customer_type: str = Query("", pattern="^(|buu_dien|du_lich|ca_hai)$"),
+    olap_operation: str = Query("roll_up", pattern="^(roll_up|drill_down|slice_dice|pivot)$"),
+    time_level: str = Query("month", pattern="^(year|month|day)$"),
+    min_inventory: Optional[int] = Query(None, ge=0),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(100, ge=1, le=200),
+) -> dict:
+    min_inventory_value = min_inventory if min_inventory is not None else 0
+
+    if question_id == 1:
+        sql = """
+            SELECT
+                s.ma_cua_hang AS store_code,
+                c.ten_thanh_pho AS city,
+                c.bang AS state,
+                s.so_dien_thoai AS phone,
+                p.mo_ta AS product_description,
+                p.kich_co AS size,
+                p.trong_luong AS weight,
+                p.gia_niem_yet AS list_price
+            FROM dbo.agg_inventory_store_product aisp
+            JOIN dbo.dim_cua_hang s ON s.store_key = aisp.store_key
+            JOIN dbo.dim_thanh_pho c ON c.city_key = s.city_key
+            JOIN dbo.dim_san_pham p ON p.product_key = aisp.product_key
+            WHERE (%s = '' OR s.ma_cua_hang = %s)
+              AND (%s = '' OR c.ten_thanh_pho LIKE %s)
+              AND (%s = '' OR p.ma_mat_hang = %s)
+            ORDER BY s.ma_cua_hang, p.mo_ta
+        """
+        rows = _query_dw(
+            sql,
+            (store_code, store_code, city_name, f"%{city_name}%", product_code, product_code),
+        )
+        return _to_table_payload(rows, page, page_size)
+
+    if question_id == 2:
+        sql = """
+            SELECT
+                f.ma_don_hang AS order_code,
+                kh.ma_kh AS customer_code,
+                kh.ten_kh AS customer_name,
+                t.full_date AS order_date
+            FROM dbo.fact_don_hang f
+            JOIN dbo.dim_khach_hang kh ON kh.customer_key = f.customer_key
+            JOIN dbo.dim_thoi_gian t ON t.date_key = f.date_key
+            WHERE (%s = '' OR kh.ma_kh = %s)
+              AND (%s = '' OR f.ma_don_hang = %s)
+            ORDER BY kh.ma_kh, t.full_date, f.ma_don_hang
+        """
+        rows = _query_dw(sql, (customer_code, customer_code, order_code, order_code))
+        return _to_table_payload(rows, page, page_size)
+
+    if question_id == 3:
+        sql = """
+            SELECT DISTINCT
+                kh.ma_kh AS customer_code,
+                kh.ten_kh AS customer_name,
+                p.ma_mat_hang AS product_code,
+                t.full_date AS order_date,
+                s.ma_cua_hang AS store_code,
+                c.ten_thanh_pho AS city,
+                s.so_dien_thoai AS phone
+            FROM dbo.fact_don_hang f_customer
+            JOIN dbo.dim_khach_hang kh ON kh.customer_key = f_customer.customer_key
+            JOIN dbo.dim_san_pham p ON p.product_key = f_customer.product_key
+            JOIN dbo.dim_thoi_gian t ON t.date_key = f_customer.date_key
+            JOIN dbo.agg_inventory_store_product aisp ON aisp.product_key = p.product_key
+            JOIN dbo.dim_cua_hang s ON s.store_key = aisp.store_key
+            JOIN dbo.dim_thanh_pho c ON c.city_key = s.city_key
+            WHERE (%s = '' OR kh.ma_kh = %s)
+              AND (%s = '' OR p.ma_mat_hang = %s)
+            ORDER BY kh.ma_kh, t.full_date, p.ma_mat_hang, s.ma_cua_hang
+        """
+        rows = _query_dw(sql, (customer_code, customer_code, product_code, product_code))
+        return _to_table_payload(rows, page, page_size)
+
+    if question_id == 4:
+        sql = """
+            SELECT
+                c.dia_chi_vp AS representative_office_address,
+                c.ten_thanh_pho AS city,
+                c.bang AS state,
+                s.ma_cua_hang AS store_code,
+                p.ma_mat_hang AS product_code,
+                p.mo_ta AS product_description,
+                aisp.total_inventory
+            FROM dbo.agg_inventory_store_product aisp
+            JOIN dbo.dim_cua_hang s ON s.store_key = aisp.store_key
+            JOIN dbo.dim_thanh_pho c ON c.city_key = s.city_key
+            JOIN dbo.dim_san_pham p ON p.product_key = aisp.product_key
+            WHERE aisp.total_inventory >= %s
+              AND (%s = '' OR p.ma_mat_hang = %s)
+            ORDER BY aisp.total_inventory DESC, s.ma_cua_hang
+        """
+        rows = _query_dw(sql, (min_inventory_value, product_code, product_code))
+        return _to_table_payload(rows, page, page_size)
+
+    if question_id == 5:
+        sql = """
+            WITH order_items AS (
+                SELECT
+                    f.ma_don_hang AS order_code,
+                    kh.ma_kh AS customer_code,
+                    kh.ten_kh AS customer_name,
+                    p.product_key,
+                    p.ma_mat_hang AS product_code,
+                    p.mo_ta AS product_description
+                FROM dbo.fact_don_hang f
+                JOIN dbo.dim_khach_hang kh ON kh.customer_key = f.customer_key
+                JOIN dbo.dim_san_pham p ON p.product_key = f.product_key
+                WHERE (%s = '' OR kh.ma_kh = %s)
+                  AND (%s = '' OR f.ma_don_hang = %s)
+                  AND (%s = '' OR p.ma_mat_hang = %s)
+            )
+            SELECT
+                oi.order_code,
+                oi.customer_code,
+                oi.customer_name,
+                oi.product_code,
+                oi.product_description,
+                s.ma_cua_hang AS store_code,
+                c.ten_thanh_pho AS city,
+                aisp.total_inventory AS inventory_available
+            FROM order_items oi
+            JOIN dbo.agg_inventory_store_product aisp ON aisp.product_key = oi.product_key
+            JOIN dbo.dim_cua_hang s ON s.store_key = aisp.store_key
+            JOIN dbo.dim_thanh_pho c ON c.city_key = s.city_key
+            ORDER BY oi.order_code, oi.product_code, s.ma_cua_hang
+        """
+        rows = _query_dw(
+            sql,
+            (customer_code, customer_code, order_code, order_code, product_code, product_code),
+        )
+        return _to_table_payload(rows, page, page_size)
+
+    if question_id == 6:
+        sql = """
+            SELECT
+                kh.ma_kh AS customer_code,
+                kh.ten_kh AS customer_name,
+                c.ten_thanh_pho AS city,
+                c.bang AS state
+            FROM dbo.dim_khach_hang kh
+            JOIN dbo.dim_thanh_pho c ON c.city_key = kh.city_key
+            WHERE (%s = '' OR kh.ma_kh = %s)
+            ORDER BY kh.ma_kh
+        """
+        rows = _query_dw(sql, (customer_code, customer_code))
+        return _to_table_payload(rows, page, page_size)
+
+    if question_id == 7:
+        sql = """
+            SELECT
+                c.ten_thanh_pho AS city,
+                p.ma_mat_hang AS product_code,
+                p.mo_ta AS product_description,
+                s.ma_cua_hang AS store_code,
+                aisp.total_inventory
+            FROM dbo.agg_inventory_store_product aisp
+            JOIN dbo.dim_cua_hang s ON s.store_key = aisp.store_key
+            JOIN dbo.dim_thanh_pho c ON c.city_key = s.city_key
+            JOIN dbo.dim_san_pham p ON p.product_key = aisp.product_key
+            WHERE (%s = '' OR c.ten_thanh_pho LIKE %s)
+              AND (%s = '' OR p.ma_mat_hang = %s)
+            ORDER BY c.ten_thanh_pho, p.ma_mat_hang, s.ma_cua_hang
+        """
+        rows = _query_dw(sql, (city_name, f"%{city_name}%", product_code, product_code))
+        return _to_table_payload(rows, page, page_size)
+
+    if question_id == 8:
+        sql = """
+            SELECT
+                f.ma_don_hang AS order_code,
+                kh.ma_kh AS customer_code,
+                kh.ten_kh AS customer_name,
+                p.ma_mat_hang AS product_code,
+                p.mo_ta AS product_description,
+                s.ma_cua_hang AS store_code,
+                c.ten_thanh_pho AS city,
+                f.so_luong_dat AS ordered_quantity,
+                f.gia_dat AS ordered_price,
+                f.tong_tien AS total_sales
+            FROM dbo.fact_don_hang f
+            JOIN dbo.dim_khach_hang kh ON kh.customer_key = f.customer_key
+            JOIN dbo.dim_san_pham p ON p.product_key = f.product_key
+            LEFT JOIN dbo.dim_cua_hang s ON s.store_key = f.store_key
+            LEFT JOIN dbo.dim_thanh_pho c ON c.city_key = s.city_key
+            WHERE (%s = '' OR kh.ma_kh = %s)
+              AND (%s = '' OR f.ma_don_hang = %s)
+              AND (%s = '' OR p.ma_mat_hang = %s)
+            ORDER BY f.ma_don_hang, p.ma_mat_hang
+        """
+        rows = _query_dw(
+            sql,
+            (customer_code, customer_code, order_code, order_code, product_code, product_code),
+        )
+        return _to_table_payload(rows, page, page_size)
+
+    if question_id == 9:
+        sql = """
+            SELECT
+                ma_kh AS customer_code,
+                ten_kh AS customer_name,
+                customer_type
+            FROM dbo.dim_khach_hang
+            WHERE customer_type IN ('du_lich', 'buu_dien', 'ca_hai')
+              AND (%s = '' OR customer_type = %s)
+            ORDER BY customer_type, ma_kh
+        """
+        rows = _query_dw(sql, (customer_type, customer_type))
+        return _to_table_payload(rows, page, page_size)
+
+    if question_id == 10:
+        if olap_operation == "pivot":
+            sql = """
+                SELECT
+                    c.ten_thanh_pho AS [row],
+                    CONCAT(a.year, '-', RIGHT('00' + CAST(a.month AS VARCHAR(2)), 2)) AS [column],
+                    SUM(a.total_sales) AS total_sales
+                FROM dbo.agg_sales_city_month a
+                JOIN dbo.dim_thanh_pho c ON c.city_key = a.city_key
+                WHERE (%s = '' OR c.ten_thanh_pho LIKE %s)
+                GROUP BY c.ten_thanh_pho, a.year, a.month
+                ORDER BY [row], [column]
+            """
+            rows = _query_dw(sql, (city_name, f"%{city_name}%"))
+            return _to_table_payload(rows, page, page_size)
+        if olap_operation == "drill_down":
+            # year -> month -> day
+            effective_level = "month" if time_level == "year" else "day"
+        elif olap_operation == "roll_up":
+            # day -> month -> year
+            effective_level = "month" if time_level == "day" else "year"
+        else:
+            effective_level = time_level
+        if effective_level == "year":
+            sql = """
+                WITH sales_agg AS (
+                    SELECT
+                        a.year,
+                        SUM(a.total_quantity) AS total_quantity,
+                        SUM(a.total_sales) AS total_sales
+                    FROM dbo.agg_sales_city_month a
+                    JOIN dbo.dim_thanh_pho c ON c.city_key = a.city_key
+                    WHERE (%s = '' OR c.ten_thanh_pho LIKE %s)
+                    GROUP BY a.year
+                )
+                SELECT
+                    year,
+                    total_quantity,
+                    total_sales,
+                    LAG(total_sales) OVER (ORDER BY year) AS previous_period_sales,
+                    total_sales - COALESCE(LAG(total_sales) OVER (ORDER BY year), 0) AS sales_change,
+                    CASE
+                        WHEN COALESCE(LAG(total_sales) OVER (ORDER BY year), 0) = 0 THEN NULL
+                        ELSE ROUND(
+                            ((total_sales - LAG(total_sales) OVER (ORDER BY year))
+                                / LAG(total_sales) OVER (ORDER BY year)) * 100.0,
+                            2
+                        )
+                    END AS sales_change_pct
+                FROM sales_agg
+                ORDER BY year
+            """
+        elif effective_level == "month":
+            sql = """
+                WITH sales_agg AS (
+                    SELECT
+                        a.year,
+                        a.month,
+                        SUM(a.total_quantity) AS total_quantity,
+                        SUM(a.total_sales) AS total_sales
+                    FROM dbo.agg_sales_city_month a
+                    JOIN dbo.dim_thanh_pho c ON c.city_key = a.city_key
+                    WHERE (%s = '' OR c.ten_thanh_pho LIKE %s)
+                    GROUP BY a.year, a.month
+                )
+                SELECT
+                    year,
+                    month,
+                    total_quantity,
+                    total_sales,
+                    LAG(total_sales) OVER (ORDER BY year, month) AS previous_period_sales,
+                    total_sales - COALESCE(LAG(total_sales) OVER (ORDER BY year, month), 0) AS sales_change,
+                    CASE
+                        WHEN COALESCE(LAG(total_sales) OVER (ORDER BY year, month), 0) = 0 THEN NULL
+                        ELSE ROUND(
+                            ((total_sales - LAG(total_sales) OVER (ORDER BY year, month))
+                                / LAG(total_sales) OVER (ORDER BY year, month)) * 100.0,
+                            2
+                        )
+                    END AS sales_change_pct
+                FROM sales_agg
+                ORDER BY year, month
+            """
+        else:
+            sql = """
+                SELECT
+                    a.year,
+                    a.month,
+                    a.day,
+                    a.total_quantity,
+                    a.total_sales
+                FROM dbo.agg_sales_city_day a
+                JOIN dbo.dim_thanh_pho c ON c.city_key = a.city_key
+                WHERE (%s = '' OR c.ten_thanh_pho LIKE %s)
+                ORDER BY a.year, a.month, a.day
+            """
+        rows = _query_dw(sql, (city_name, f"%{city_name}%"))
+        return _to_table_payload(rows, page, page_size)
+
+    if question_id == 11:
+        if olap_operation == "pivot":
+            sql = """
+                SELECT
+                    c.ten_thanh_pho AS [row],
+                    CONCAT(a.year, '-', RIGHT('00' + CAST(a.month AS VARCHAR(2)), 2)) AS [column],
+                    a.total_sales
+                FROM dbo.agg_sales_city_month a
+                JOIN dbo.dim_thanh_pho c ON c.city_key = a.city_key
+                WHERE (%s = '' OR c.ten_thanh_pho LIKE %s)
+                ORDER BY [row], [column]
+            """
+            rows = _query_dw(sql, (city_name, f"%{city_name}%"))
+            return _to_table_payload(rows, page, page_size)
+        if olap_operation == "drill_down":
+            effective_level = "month" if time_level == "year" else "day"
+        elif olap_operation == "roll_up":
+            effective_level = "month" if time_level == "day" else "year"
+        else:
+            effective_level = time_level
+
+        if effective_level == "year":
+            sql = """
+                WITH ranked_city AS (
+                    SELECT
+                        a.year,
+                        c.ten_thanh_pho AS city,
+                        SUM(a.total_quantity) AS total_quantity,
+                        SUM(a.total_sales) AS total_sales,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY a.year
+                            ORDER BY SUM(a.total_sales) DESC, c.ten_thanh_pho
+                        ) AS rn
+                    FROM dbo.agg_sales_city_month a
+                    JOIN dbo.dim_thanh_pho c ON c.city_key = a.city_key
+                    WHERE (%s = '' OR c.ten_thanh_pho LIKE %s)
+                    GROUP BY a.year, c.ten_thanh_pho
+                )
+                SELECT
+                    year,
+                    city,
+                    total_quantity,
+                    total_sales
+                FROM ranked_city
+                WHERE rn = 1
+                ORDER BY year
+            """
+        elif effective_level == "month":
+            sql = """
+                WITH ranked_city AS (
+                    SELECT
+                        a.year,
+                        a.month,
+                        c.ten_thanh_pho AS city,
+                        a.total_quantity,
+                        a.total_sales,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY a.year, a.month
+                            ORDER BY a.total_sales DESC, c.ten_thanh_pho
+                        ) AS rn
+                    FROM dbo.agg_sales_city_month a
+                    JOIN dbo.dim_thanh_pho c ON c.city_key = a.city_key
+                    WHERE (%s = '' OR c.ten_thanh_pho LIKE %s)
+                )
+                SELECT
+                    year,
+                    month,
+                    city,
+                    total_quantity,
+                    total_sales
+                FROM ranked_city
+                WHERE rn = 1
+                ORDER BY year, month
+            """
+        else:
+            sql = """
+                WITH ranked_city AS (
+                    SELECT
+                        a.year,
+                        a.month,
+                        a.day,
+                        c.ten_thanh_pho AS city,
+                        a.total_quantity,
+                        a.total_sales,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY a.year, a.month, a.day
+                            ORDER BY a.total_sales DESC, c.ten_thanh_pho
+                        ) AS rn
+                    FROM dbo.agg_sales_city_day a
+                    JOIN dbo.dim_thanh_pho c ON c.city_key = a.city_key
+                    WHERE (%s = '' OR c.ten_thanh_pho LIKE %s)
+                )
+                SELECT
+                    year,
+                    month,
+                    day,
+                    city,
+                    total_quantity,
+                    total_sales
+                FROM ranked_city
+                WHERE rn = 1
+                ORDER BY year, month, day
+            """
+        rows = _query_dw(sql, (city_name, f"%{city_name}%"))
+        return _to_table_payload(rows, page, page_size)
+
+    if question_id == 12:
+        if olap_operation == "pivot":
+            sql = """
+                SELECT
+                    p.ma_mat_hang AS [row],
+                    CONCAT(a.year, '-', RIGHT('00' + CAST(a.month AS VARCHAR(2)), 2)) AS [column],
+                    a.total_quantity
+                FROM dbo.agg_sales_product_month a
+                JOIN dbo.dim_san_pham p ON p.product_key = a.product_key
+                WHERE (%s = '' OR p.ma_mat_hang = %s)
+                ORDER BY [row], [column]
+            """
+            rows = _query_dw(sql, (product_code, product_code))
+            return _to_table_payload(rows, page, page_size)
+        if olap_operation == "drill_down":
+            effective_level = "month" if time_level == "year" else "day"
+        elif olap_operation == "roll_up":
+            effective_level = "month" if time_level == "day" else "year"
+        else:
+            effective_level = time_level
+
+        if effective_level == "year":
+            sql = """
+                WITH ranked_product AS (
+                    SELECT
+                        a.year,
+                        p.ma_mat_hang AS product_code,
+                        p.mo_ta AS product_description,
+                        SUM(a.total_quantity) AS total_quantity,
+                        SUM(a.total_sales) AS total_sales,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY a.year
+                            ORDER BY SUM(a.total_quantity) DESC, SUM(a.total_sales) DESC, p.ma_mat_hang
+                        ) AS rn
+                    FROM dbo.agg_sales_product_month a
+                    JOIN dbo.dim_san_pham p ON p.product_key = a.product_key
+                    WHERE (%s = '' OR p.ma_mat_hang = %s)
+                    GROUP BY a.year, p.ma_mat_hang, p.mo_ta
+                )
+                SELECT
+                    year,
+                    product_code,
+                    product_description,
+                    total_quantity,
+                    total_sales
+                FROM ranked_product
+                WHERE rn = 1
+                ORDER BY year
+            """
+        elif effective_level == "month":
+            sql = """
+                WITH ranked_product AS (
+                    SELECT
+                        a.year,
+                        a.month,
+                        p.ma_mat_hang AS product_code,
+                        p.mo_ta AS product_description,
+                        a.total_quantity,
+                        a.total_sales,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY a.year, a.month
+                            ORDER BY a.total_quantity DESC, a.total_sales DESC, p.ma_mat_hang
+                        ) AS rn
+                    FROM dbo.agg_sales_product_month a
+                    JOIN dbo.dim_san_pham p ON p.product_key = a.product_key
+                    WHERE (%s = '' OR p.ma_mat_hang = %s)
+                )
+                SELECT
+                    year,
+                    month,
+                    product_code,
+                    product_description,
+                    total_quantity,
+                    total_sales
+                FROM ranked_product
+                WHERE rn = 1
+                ORDER BY year, month
+            """
+        else:
+            sql = """
+                WITH sales_day AS (
+                    SELECT
+                        t.year,
+                        t.month,
+                        t.day,
+                        p.ma_mat_hang AS product_code,
+                        p.mo_ta AS product_description,
+                        SUM(f.so_luong_dat) AS total_quantity,
+                        SUM(f.tong_tien) AS total_sales
+                    FROM dbo.fact_don_hang f
+                    JOIN dbo.dim_thoi_gian t ON t.date_key = f.date_key
+                    JOIN dbo.dim_san_pham p ON p.product_key = f.product_key
+                    WHERE (%s = '' OR p.ma_mat_hang = %s)
+                    GROUP BY t.year, t.month, t.day, p.ma_mat_hang, p.mo_ta
+                ),
+                ranked_product AS (
+                    SELECT
+                        year,
+                        month,
+                        day,
+                        product_code,
+                        product_description,
+                        total_quantity,
+                        total_sales,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY year, month, day
+                            ORDER BY total_quantity DESC, total_sales DESC, product_code
+                        ) AS rn
+                    FROM sales_day
+                )
+                SELECT
+                    year,
+                    month,
+                    day,
+                    product_code,
+                    product_description,
+                    total_quantity,
+                    total_sales
+                FROM ranked_product
+                WHERE rn = 1
+                ORDER BY year, month, day
+            """
+        rows = _query_dw(sql, (product_code, product_code))
+        return _to_table_payload(rows, page, page_size)
+
+    if question_id == 13:
+        if olap_operation == "pivot":
+            sql = """
+                SELECT
+                    c.ten_thanh_pho AS [row],
+                    p.ma_mat_hang AS [column],
+                    a.total_inventory
+                FROM dbo.agg_inventory_city_product a
+                JOIN dbo.dim_thanh_pho c ON c.city_key = a.city_key
+                JOIN dbo.dim_san_pham p ON p.product_key = a.product_key
+                WHERE (%s = '' OR c.ten_thanh_pho LIKE %s)
+                  AND (%s = '' OR p.ma_mat_hang = %s)
+                ORDER BY [row], [column]
+            """
+            rows = _query_dw(sql, (city_name, f"%{city_name}%", product_code, product_code))
+            return _to_table_payload(rows, page, page_size)
+        if olap_operation == "drill_down":
+            effective_level = "month" if time_level == "year" else "day"
+        elif olap_operation == "roll_up":
+            effective_level = "month" if time_level == "day" else "year"
+        else:
+            effective_level = time_level
+
+        if effective_level == "year":
+            sql = """
+                WITH inv AS (
+                    SELECT
+                        t.year,
+                        c.ten_thanh_pho AS city,
+                        SUM(f.so_luong_ton) AS total_inventory
+                    FROM dbo.fact_kho_hang f
+                    JOIN dbo.dim_thoi_gian t ON t.date_key = f.date_key
+                    JOIN dbo.dim_cua_hang s ON s.store_key = f.store_key
+                    JOIN dbo.dim_thanh_pho c ON c.city_key = s.city_key
+                    JOIN dbo.dim_san_pham p ON p.product_key = f.product_key
+                    WHERE (%s = '' OR c.ten_thanh_pho LIKE %s)
+                      AND (%s = '' OR p.ma_mat_hang = %s)
+                    GROUP BY t.year, c.ten_thanh_pho
+                ),
+                ranked AS (
+                    SELECT
+                        year,
+                        city,
+                        total_inventory,
+                        ROW_NUMBER() OVER (PARTITION BY year ORDER BY total_inventory DESC, city) AS rn
+                    FROM inv
+                )
+                SELECT year, city, total_inventory
+                FROM ranked
+                WHERE rn = 1
+                ORDER BY year
+            """
+        elif effective_level == "month":
+            sql = """
+                WITH inv AS (
+                    SELECT
+                        t.year,
+                        t.month,
+                        c.ten_thanh_pho AS city,
+                        SUM(f.so_luong_ton) AS total_inventory
+                    FROM dbo.fact_kho_hang f
+                    JOIN dbo.dim_thoi_gian t ON t.date_key = f.date_key
+                    JOIN dbo.dim_cua_hang s ON s.store_key = f.store_key
+                    JOIN dbo.dim_thanh_pho c ON c.city_key = s.city_key
+                    JOIN dbo.dim_san_pham p ON p.product_key = f.product_key
+                    WHERE (%s = '' OR c.ten_thanh_pho LIKE %s)
+                      AND (%s = '' OR p.ma_mat_hang = %s)
+                    GROUP BY t.year, t.month, c.ten_thanh_pho
+                ),
+                ranked AS (
+                    SELECT
+                        year,
+                        month,
+                        city,
+                        total_inventory,
+                        ROW_NUMBER() OVER (PARTITION BY year, month ORDER BY total_inventory DESC, city) AS rn
+                    FROM inv
+                )
+                SELECT year, month, city, total_inventory
+                FROM ranked
+                WHERE rn = 1
+                ORDER BY year, month
+            """
+        else:
+            sql = """
+                WITH inv AS (
+                    SELECT
+                        t.year,
+                        t.month,
+                        t.day,
+                        c.ten_thanh_pho AS city,
+                        SUM(f.so_luong_ton) AS total_inventory
+                    FROM dbo.fact_kho_hang f
+                    JOIN dbo.dim_thoi_gian t ON t.date_key = f.date_key
+                    JOIN dbo.dim_cua_hang s ON s.store_key = f.store_key
+                    JOIN dbo.dim_thanh_pho c ON c.city_key = s.city_key
+                    JOIN dbo.dim_san_pham p ON p.product_key = f.product_key
+                    WHERE (%s = '' OR c.ten_thanh_pho LIKE %s)
+                      AND (%s = '' OR p.ma_mat_hang = %s)
+                    GROUP BY t.year, t.month, t.day, c.ten_thanh_pho
+                ),
+                ranked AS (
+                    SELECT
+                        year,
+                        month,
+                        day,
+                        city,
+                        total_inventory,
+                        ROW_NUMBER() OVER (PARTITION BY year, month, day ORDER BY total_inventory DESC, city) AS rn
+                    FROM inv
+                )
+                SELECT year, month, day, city, total_inventory
+                FROM ranked
+                WHERE rn = 1
+                ORDER BY year, month, day
+            """
+        rows = _query_dw(sql, (city_name, f"%{city_name}%", product_code, product_code))
+        return _to_table_payload(rows, page, page_size)
+
+    if question_id == 14:
+        if olap_operation == "pivot":
+            sql = """
+                SELECT
+                    s.ma_cua_hang AS [row],
+                    p.ma_mat_hang AS [column],
+                    a.total_inventory
+                FROM dbo.agg_inventory_store_product a
+                JOIN dbo.dim_cua_hang s ON s.store_key = a.store_key
+                JOIN dbo.dim_san_pham p ON p.product_key = a.product_key
+                WHERE (%s = '' OR s.ma_cua_hang = %s)
+                  AND (%s = '' OR p.ma_mat_hang = %s)
+                ORDER BY [row], [column]
+            """
+            rows = _query_dw(sql, (store_code, store_code, product_code, product_code))
+            return _to_table_payload(rows, page, page_size)
+        if olap_operation == "drill_down":
+            effective_level = "month" if time_level == "year" else "day"
+        elif olap_operation == "roll_up":
+            effective_level = "month" if time_level == "day" else "year"
+        else:
+            effective_level = time_level
+
+        if effective_level == "year":
+            sql = """
+                WITH inv AS (
+                    SELECT
+                        t.year,
+                        s.ma_cua_hang AS store_code,
+                        c.ten_thanh_pho AS city,
+                        SUM(f.so_luong_ton) AS total_inventory
+                    FROM dbo.fact_kho_hang f
+                    JOIN dbo.dim_thoi_gian t ON t.date_key = f.date_key
+                    JOIN dbo.dim_cua_hang s ON s.store_key = f.store_key
+                    JOIN dbo.dim_thanh_pho c ON c.city_key = s.city_key
+                    JOIN dbo.dim_san_pham p ON p.product_key = f.product_key
+                    WHERE (%s = '' OR s.ma_cua_hang = %s)
+                      AND (%s = '' OR p.ma_mat_hang = %s)
+                    GROUP BY t.year, s.ma_cua_hang, c.ten_thanh_pho
+                ),
+                ranked AS (
+                    SELECT
+                        year,
+                        store_code,
+                        city,
+                        total_inventory,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY year
+                            ORDER BY total_inventory DESC, store_code
+                        ) AS rn
+                    FROM inv
+                )
+                SELECT year, store_code, city, total_inventory
+                FROM ranked
+                WHERE rn = 1
+                ORDER BY year
+            """
+        elif effective_level == "month":
+            sql = """
+                WITH inv AS (
+                    SELECT
+                        t.year,
+                        t.month,
+                        s.ma_cua_hang AS store_code,
+                        c.ten_thanh_pho AS city,
+                        SUM(f.so_luong_ton) AS total_inventory
+                    FROM dbo.fact_kho_hang f
+                    JOIN dbo.dim_thoi_gian t ON t.date_key = f.date_key
+                    JOIN dbo.dim_cua_hang s ON s.store_key = f.store_key
+                    JOIN dbo.dim_thanh_pho c ON c.city_key = s.city_key
+                    JOIN dbo.dim_san_pham p ON p.product_key = f.product_key
+                    WHERE (%s = '' OR s.ma_cua_hang = %s)
+                      AND (%s = '' OR p.ma_mat_hang = %s)
+                    GROUP BY t.year, t.month, s.ma_cua_hang, c.ten_thanh_pho
+                ),
+                ranked AS (
+                    SELECT
+                        year,
+                        month,
+                        store_code,
+                        city,
+                        total_inventory,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY year, month
+                            ORDER BY total_inventory DESC, store_code
+                        ) AS rn
+                    FROM inv
+                )
+                SELECT year, month, store_code, city, total_inventory
+                FROM ranked
+                WHERE rn = 1
+                ORDER BY year, month
+            """
+        else:
+            sql = """
+                WITH inv AS (
+                    SELECT
+                        t.year,
+                        t.month,
+                        t.day,
+                        s.ma_cua_hang AS store_code,
+                        c.ten_thanh_pho AS city,
+                        SUM(f.so_luong_ton) AS total_inventory
+                    FROM dbo.fact_kho_hang f
+                    JOIN dbo.dim_thoi_gian t ON t.date_key = f.date_key
+                    JOIN dbo.dim_cua_hang s ON s.store_key = f.store_key
+                    JOIN dbo.dim_thanh_pho c ON c.city_key = s.city_key
+                    JOIN dbo.dim_san_pham p ON p.product_key = f.product_key
+                    WHERE (%s = '' OR s.ma_cua_hang = %s)
+                      AND (%s = '' OR p.ma_mat_hang = %s)
+                    GROUP BY t.year, t.month, t.day, s.ma_cua_hang, c.ten_thanh_pho
+                ),
+                ranked AS (
+                    SELECT
+                        year,
+                        month,
+                        day,
+                        store_code,
+                        city,
+                        total_inventory,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY year, month, day
+                            ORDER BY total_inventory DESC, store_code
+                        ) AS rn
+                    FROM inv
+                )
+                SELECT year, month, day, store_code, city, total_inventory
+                FROM ranked
+                WHERE rn = 1
+                ORDER BY year, month, day
+            """
+        rows = _query_dw(sql, (store_code, store_code, product_code, product_code))
+        return _to_table_payload(rows, page, page_size)
+
+    return {"columns": [], "rows": [], "page": 1, "page_size": page_size, "total_rows": 0, "total_pages": 1}
+
+
 RUNNING = True
 
 
@@ -597,6 +1867,8 @@ if __name__ == "__main__":
         help="Chay FastAPI dashboard OLAP.",
     )
     args = parser.parse_args()
+    #### specific add 
+
     if args.run_api:
         import uvicorn  # pyright: ignore[reportMissingImports]
 

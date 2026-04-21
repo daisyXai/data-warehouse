@@ -185,18 +185,38 @@ def seed_fact_order(
         VALUES (%s, %s, %s, %s, %s, %s, %s)
     """
     buf = []
+    special_order_lines = []
     for i in range(n):
+        order_code = f"ORDER{i}"
+        date_key = rng.choice(date_keys)
+        customer_key = rng.choice(customer_keys)
+        base_product_key = rng.choice(product_keys)
+        store_key = rng.choice(store_keys)
         buf.append(
             (
-                rng.choice(date_keys),
-                rng.choice(customer_keys),
-                rng.choice(product_keys),
-                rng.choice(store_keys),
-                f"ORDER{i}",
+                date_key,
+                customer_key,
+                base_product_key,
+                store_key,
+                order_code,
                 rng.randint(1, 10),
                 rng.randint(100, 1000),
             )
         )
+        if i <= 20 and len(product_keys) > 1:
+            alt_candidates = [pk for pk in product_keys if pk != base_product_key]
+            alt_product_key = rng.choice(alt_candidates)
+            special_order_lines.append(
+                (
+                    date_key,
+                    customer_key,
+                    alt_product_key,
+                    store_key,
+                    order_code,
+                    rng.randint(1, 10),
+                    rng.randint(100, 1000),
+                )
+            )
         if len(buf) >= batch:
             cursor.executemany(insert_sql, buf)
             buf = []
@@ -204,6 +224,9 @@ def seed_fact_order(
                 print(f"fact_don_hang: inserted ~{i + 1}")
     if buf:
         cursor.executemany(insert_sql, buf)
+    if special_order_lines:
+        cursor.executemany(insert_sql, special_order_lines)
+        print(f"fact_don_hang: added {len(special_order_lines)} extra lines for ORDER0..ORDER20.")
     print(f"fact_don_hang: hoan tat {n} dong.")
 
 
