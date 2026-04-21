@@ -119,8 +119,8 @@ def ensure_dw_schema(
         BEGIN
             CREATE TABLE dbo.dim_khach_hang (
                 customer_key INT IDENTITY(1,1) NOT NULL PRIMARY KEY,
-                ma_kh VARCHAR(20) NOT NULL UNIQUE,
-                ten_kh NVARCHAR(200) NOT NULL,
+                ma_khach_hang VARCHAR(20) NOT NULL UNIQUE,
+                ten_khach_hang NVARCHAR(200) NOT NULL,
                 city_key INT NOT NULL,
                 ngay_dat_hang_dau_tien DATE NOT NULL,
                 customer_type VARCHAR(20) NOT NULL
@@ -359,8 +359,8 @@ def load_idb_into_dw(
         MERGE dbo.dim_khach_hang AS T
         USING (
             SELECT
-                kh.ma_khach_hang AS ma_kh,
-                kh.ten_kh,
+                kh.ma_khach_hang,
+                kh.ten_kh AS ten_khach_hang,
                 tp.city_key,
                 kh.ngay_dat_hang_dau_tien,
                 CASE
@@ -374,16 +374,16 @@ def load_idb_into_dw(
             LEFT JOIN [{src}].dbo.khach_hang_buu_dien kbd ON kbd.ma_khach_hang = kh.ma_khach_hang
             LEFT JOIN [{src}].dbo.khach_hang_du_lich kdl ON kdl.ma_khach_hang = kh.ma_khach_hang
         ) AS S
-        ON T.ma_kh = S.ma_kh
+        ON T.ma_khach_hang = S.ma_khach_hang
         WHEN MATCHED THEN
             UPDATE SET
-                T.ten_kh = S.ten_kh,
+                T.ten_khach_hang = S.ten_khach_hang,
                 T.city_key = S.city_key,
                 T.ngay_dat_hang_dau_tien = S.ngay_dat_hang_dau_tien,
                 T.customer_type = S.customer_type
         WHEN NOT MATCHED THEN
-            INSERT (ma_kh, ten_kh, city_key, ngay_dat_hang_dau_tien, customer_type)
-            VALUES (S.ma_kh, S.ten_kh, S.city_key, S.ngay_dat_hang_dau_tien, S.customer_type);
+            INSERT (ma_khach_hang, ten_khach_hang, city_key, ngay_dat_hang_dau_tien, customer_type)
+            VALUES (S.ma_khach_hang, S.ten_khach_hang, S.city_key, S.ngay_dat_hang_dau_tien, S.customer_type);
         """
     )
 
@@ -436,7 +436,7 @@ def load_idb_into_dw(
             mhdd.gia_dat
         FROM [{src}].dbo.don_dat_hang ddh
         JOIN [{src}].dbo.mat_hang_duoc_dat mhdd ON mhdd.ma_don = ddh.ma_don
-        JOIN dbo.dim_khach_hang dkh ON dkh.ma_kh = ddh.ma_khach_hang
+        JOIN dbo.dim_khach_hang dkh ON dkh.ma_khach_hang = ddh.ma_khach_hang
         JOIN dbo.dim_san_pham dsp ON dsp.ma_mat_hang = mhdd.ma_mat_hang
         OUTER APPLY (
             SELECT TOP 1 dch.store_key

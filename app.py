@@ -740,12 +740,12 @@ def sales_data(
         [
             "c.ten_thanh_pho AS city",
             "p.mo_ta AS product",
-            "kh.ten_kh AS customer",
+            "kh.ten_khach_hang AS customer",
             "SUM(f.so_luong_dat) AS total_quantity",
             "SUM(f.tong_tien) AS total_sales",
         ]
     )
-    group_cols.extend(["c.ten_thanh_pho", "p.mo_ta", "kh.ten_kh"])
+    group_cols.extend(["c.ten_thanh_pho", "p.mo_ta", "kh.ten_khach_hang"])
 
     order_cols = ["year"]
     if level in ("month", "day"):
@@ -764,7 +764,7 @@ def sales_data(
         JOIN dbo.dim_khach_hang kh ON f.customer_key = kh.customer_key
         WHERE (%s = '' OR c.ten_thanh_pho LIKE %s)
           AND (%s = '' OR p.mo_ta LIKE %s)
-          AND (%s = '' OR kh.ten_kh LIKE %s)
+          AND (%s = '' OR kh.ten_khach_hang LIKE %s)
         GROUP BY {", ".join(group_cols)}
     """
     params = (
@@ -940,15 +940,15 @@ def quick_question(
         sql = """
             SELECT
                 f.ma_don_hang AS order_code,
-                kh.ma_kh AS customer_code,
-                kh.ten_kh AS customer_name,
+                kh.ma_khach_hang AS customer_code,
+                kh.ten_khach_hang AS customer_name,
                 t.full_date AS order_date
             FROM dbo.fact_don_hang f
             JOIN dbo.dim_khach_hang kh ON kh.customer_key = f.customer_key
             JOIN dbo.dim_thoi_gian t ON t.date_key = f.date_key
-            WHERE (%s = '' OR kh.ma_kh = %s)
+            WHERE (%s = '' OR kh.ma_khach_hang = %s)
               AND (%s = '' OR f.ma_don_hang = %s)
-            ORDER BY kh.ma_kh, t.full_date, f.ma_don_hang
+            ORDER BY kh.ma_khach_hang, t.full_date, f.ma_don_hang
         """
         rows = _query_dw(sql, (customer_code, customer_code, order_code, order_code))
         return _to_table_payload(rows, page, page_size)
@@ -956,8 +956,8 @@ def quick_question(
     if question_id == 3:
         sql = """
             SELECT DISTINCT
-                kh.ma_kh AS customer_code,
-                kh.ten_kh AS customer_name,
+                kh.ma_khach_hang AS customer_code,
+                kh.ten_khach_hang AS customer_name,
                 p.ma_mat_hang AS product_code,
                 t.full_date AS order_date,
                 s.ma_cua_hang AS store_code,
@@ -970,9 +970,9 @@ def quick_question(
             JOIN dbo.agg_inventory_store_product aisp ON aisp.product_key = p.product_key
             JOIN dbo.dim_cua_hang s ON s.store_key = aisp.store_key
             JOIN dbo.dim_thanh_pho c ON c.city_key = s.city_key
-            WHERE (%s = '' OR kh.ma_kh = %s)
+            WHERE (%s = '' OR kh.ma_khach_hang = %s)
               AND (%s = '' OR p.ma_mat_hang = %s)
-            ORDER BY kh.ma_kh, t.full_date, p.ma_mat_hang, s.ma_cua_hang
+            ORDER BY kh.ma_khach_hang, t.full_date, p.ma_mat_hang, s.ma_cua_hang
         """
         rows = _query_dw(sql, (customer_code, customer_code, product_code, product_code))
         return _to_table_payload(rows, page, page_size)
@@ -1003,15 +1003,15 @@ def quick_question(
             WITH order_items AS (
                 SELECT
                     f.ma_don_hang AS order_code,
-                    kh.ma_kh AS customer_code,
-                    kh.ten_kh AS customer_name,
+                    kh.ma_khach_hang AS customer_code,
+                    kh.ten_khach_hang AS customer_name,
                     p.product_key,
                     p.ma_mat_hang AS product_code,
                     p.mo_ta AS product_description
                 FROM dbo.fact_don_hang f
                 JOIN dbo.dim_khach_hang kh ON kh.customer_key = f.customer_key
                 JOIN dbo.dim_san_pham p ON p.product_key = f.product_key
-                WHERE (%s = '' OR kh.ma_kh = %s)
+                WHERE (%s = '' OR kh.ma_khach_hang = %s)
                   AND (%s = '' OR f.ma_don_hang = %s)
                   AND (%s = '' OR p.ma_mat_hang = %s)
             )
@@ -1039,14 +1039,14 @@ def quick_question(
     if question_id == 6:
         sql = """
             SELECT
-                kh.ma_kh AS customer_code,
-                kh.ten_kh AS customer_name,
+                kh.ma_khach_hang AS customer_code,
+                kh.ten_khach_hang AS customer_name,
                 c.ten_thanh_pho AS city,
                 c.bang AS state
             FROM dbo.dim_khach_hang kh
             JOIN dbo.dim_thanh_pho c ON c.city_key = kh.city_key
-            WHERE (%s = '' OR kh.ma_kh = %s)
-            ORDER BY kh.ma_kh
+            WHERE (%s = '' OR kh.ma_khach_hang = %s)
+            ORDER BY kh.ma_khach_hang
         """
         rows = _query_dw(sql, (customer_code, customer_code))
         return _to_table_payload(rows, page, page_size)
@@ -1074,8 +1074,8 @@ def quick_question(
         sql = """
             SELECT
                 f.ma_don_hang AS order_code,
-                kh.ma_kh AS customer_code,
-                kh.ten_kh AS customer_name,
+                kh.ma_khach_hang AS customer_code,
+                kh.ten_khach_hang AS customer_name,
                 p.ma_mat_hang AS product_code,
                 p.mo_ta AS product_description,
                 s.ma_cua_hang AS store_code,
@@ -1088,7 +1088,7 @@ def quick_question(
             JOIN dbo.dim_san_pham p ON p.product_key = f.product_key
             LEFT JOIN dbo.dim_cua_hang s ON s.store_key = f.store_key
             LEFT JOIN dbo.dim_thanh_pho c ON c.city_key = s.city_key
-            WHERE (%s = '' OR kh.ma_kh = %s)
+            WHERE (%s = '' OR kh.ma_khach_hang = %s)
               AND (%s = '' OR f.ma_don_hang = %s)
               AND (%s = '' OR p.ma_mat_hang = %s)
             ORDER BY f.ma_don_hang, p.ma_mat_hang
@@ -1102,13 +1102,13 @@ def quick_question(
     if question_id == 9:
         sql = """
             SELECT
-                ma_kh AS customer_code,
-                ten_kh AS customer_name,
+                ma_khach_hang AS customer_code,
+                ten_khach_hang AS customer_name,
                 customer_type
             FROM dbo.dim_khach_hang
             WHERE customer_type IN ('du_lich', 'buu_dien', 'ca_hai')
               AND (%s = '' OR customer_type = %s)
-            ORDER BY customer_type, ma_kh
+            ORDER BY customer_type, ma_khach_hang
         """
         rows = _query_dw(sql, (customer_type, customer_type))
         return _to_table_payload(rows, page, page_size)

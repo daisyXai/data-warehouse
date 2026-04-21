@@ -141,8 +141,8 @@ def seed_customer(cursor: pymssql.Cursor, rng: random.Random) -> None:
     for i in range(1, 1001):
         cursor.execute(
             """
-            IF NOT EXISTS (SELECT 1 FROM dbo.dim_khach_hang WHERE ma_kh = %s)
-            INSERT INTO dbo.dim_khach_hang (ma_kh, ten_kh, city_key, ngay_dat_hang_dau_tien, customer_type)
+            IF NOT EXISTS (SELECT 1 FROM dbo.dim_khach_hang WHERE ma_khach_hang = %s)
+            INSERT INTO dbo.dim_khach_hang (ma_khach_hang, ten_khach_hang, city_key, ngay_dat_hang_dau_tien, customer_type)
             VALUES (%s, %s, %s, %s, %s)
             """,
             (
