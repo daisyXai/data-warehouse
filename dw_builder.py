@@ -177,6 +177,88 @@ def ensure_dw_schema(
         END
         """
     )
+    cursor.execute(
+        """
+        IF OBJECT_ID(N'dbo.dim_cua_hang', N'U') IS NOT NULL
+           AND NOT EXISTS (
+               SELECT 1 FROM sys.indexes
+               WHERE name = N'ix_dim_cua_hang_city_store'
+                 AND object_id = OBJECT_ID(N'dbo.dim_cua_hang')
+           )
+        BEGIN
+            CREATE NONCLUSTERED INDEX ix_dim_cua_hang_city_store
+            ON dbo.dim_cua_hang (city_key, store_key);
+        END
+
+        IF OBJECT_ID(N'dbo.dim_khach_hang', N'U') IS NOT NULL
+           AND NOT EXISTS (
+               SELECT 1 FROM sys.indexes
+               WHERE name = N'ix_dim_khach_hang_city_key'
+                 AND object_id = OBJECT_ID(N'dbo.dim_khach_hang')
+           )
+        BEGIN
+            CREATE NONCLUSTERED INDEX ix_dim_khach_hang_city_key
+            ON dbo.dim_khach_hang (city_key);
+        END
+
+        IF OBJECT_ID(N'dbo.fact_don_hang', N'U') IS NOT NULL
+           AND NOT EXISTS (
+               SELECT 1 FROM sys.indexes
+               WHERE name = N'ix_fact_don_hang_date_store_product'
+                 AND object_id = OBJECT_ID(N'dbo.fact_don_hang')
+           )
+        BEGIN
+            CREATE NONCLUSTERED INDEX ix_fact_don_hang_date_store_product
+            ON dbo.fact_don_hang (date_key, store_key, product_key)
+            INCLUDE (customer_key, so_luong_dat, gia_dat, tong_tien);
+        END
+
+        IF OBJECT_ID(N'dbo.fact_don_hang', N'U') IS NOT NULL
+           AND NOT EXISTS (
+               SELECT 1 FROM sys.indexes
+               WHERE name = N'ix_fact_don_hang_customer_date'
+                 AND object_id = OBJECT_ID(N'dbo.fact_don_hang')
+           )
+        BEGIN
+            CREATE NONCLUSTERED INDEX ix_fact_don_hang_customer_date
+            ON dbo.fact_don_hang (customer_key, date_key);
+        END
+
+        IF OBJECT_ID(N'dbo.fact_don_hang', N'U') IS NOT NULL
+           AND NOT EXISTS (
+               SELECT 1 FROM sys.indexes
+               WHERE name = N'ux_fact_don_hang_order_product'
+                 AND object_id = OBJECT_ID(N'dbo.fact_don_hang')
+           )
+        BEGIN
+            CREATE UNIQUE NONCLUSTERED INDEX ux_fact_don_hang_order_product
+            ON dbo.fact_don_hang (ma_don_hang, product_key);
+        END
+
+        IF OBJECT_ID(N'dbo.fact_kho_hang', N'U') IS NOT NULL
+           AND NOT EXISTS (
+               SELECT 1 FROM sys.indexes
+               WHERE name = N'ux_fact_kho_hang_date_store_product'
+                 AND object_id = OBJECT_ID(N'dbo.fact_kho_hang')
+           )
+        BEGIN
+            CREATE UNIQUE NONCLUSTERED INDEX ux_fact_kho_hang_date_store_product
+            ON dbo.fact_kho_hang (date_key, store_key, product_key);
+        END
+
+        IF OBJECT_ID(N'dbo.fact_kho_hang', N'U') IS NOT NULL
+           AND NOT EXISTS (
+               SELECT 1 FROM sys.indexes
+               WHERE name = N'ix_fact_kho_hang_store_product'
+                 AND object_id = OBJECT_ID(N'dbo.fact_kho_hang')
+           )
+        BEGIN
+            CREATE NONCLUSTERED INDEX ix_fact_kho_hang_store_product
+            ON dbo.fact_kho_hang (store_key, product_key)
+            INCLUDE (so_luong_ton, date_key);
+        END
+        """
+    )
 
     conn.close()
 
