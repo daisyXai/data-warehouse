@@ -14,6 +14,7 @@ from dw_builder import (
 )
 from dw_seed_demo import run_all_dw_demo_seed
 from idbase_merge import merge_ier_to_idbase
+from olap_engine import get_sales_olap_service, invalidate_sales_olap_cache
 from representative_office_db import init_and_seed_representative_office_db
 from sell_db import init_sell_db
 ### su dung kwarg de bat keyword gen_seed_data === True hoac false de dua vao do de chayj ham tao seed data .
@@ -172,6 +173,14 @@ let q13CurrentLevel = "year";
 let q13PendingOperation = "slice_dice";
 let q14CurrentLevel = "year";
 let q14PendingOperation = "slice_dice";
+const OLAP_PAGE_SIZE = 200;
+const olapFrontendState = {
+  10: { rawRows: null, path: [], filterKey: "{}", filters: {} },
+  11: { rawRows: null, path: [], filterKey: "{}", filters: {} },
+  12: { rawRows: null, path: [], filterKey: "{}", filters: {} },
+  13: { rawRows: null, path: [], filterKey: "{}", filters: {} },
+  14: { rawRows: null, path: [], filterKey: "{}", filters: {} },
+};
 const FILTER_FIELDS = {
   store_code: {
     label: "Store code",
@@ -263,22 +272,27 @@ function setSelectedQuestion(qid) {
   if (qid === 10) {
     q10CurrentLevel = "year";
     q10PendingOperation = "slice_dice";
+    olapFrontendState[10].path = [];
   }
   if (qid === 11) {
     q11CurrentLevel = "year";
     q11PendingOperation = "slice_dice";
+    olapFrontendState[11].path = [];
   }
   if (qid === 12) {
     q12CurrentLevel = "year";
     q12PendingOperation = "slice_dice";
+    olapFrontendState[12].path = [];
   }
   if (qid === 13) {
     q13CurrentLevel = "year";
     q13PendingOperation = "slice_dice";
+    olapFrontendState[13].path = [];
   }
   if (qid === 14) {
     q14CurrentLevel = "year";
     q14PendingOperation = "slice_dice";
+    olapFrontendState[14].path = [];
   }
   for (let i = 1; i <= QUESTIONS.length; i++) {
     document.getElementById(`qbtn-${i}`).classList.toggle("active", i === qid);
@@ -315,102 +329,86 @@ function renderFiltersForQuestion() {
   const host = document.getElementById("dynamicFilters");
   const filterKeys = QUESTION_FILTERS[selectedQuestion] || [];
   if (selectedQuestion === 10) {
-    const q10FilterKeys = filterKeys.filter((key) => key === "city_name");
-    const q10InputsHtml = q10FilterKeys.map((key) => {
-      const cfg = FILTER_FIELDS[key];
-      if (!cfg) {
-        return "";
-      }
-      return `<input data-filter-key="${key}" type="${cfg.type}" placeholder="${cfg.placeholder}" />`;
-    }).join("");
-    const canDrillDown = q10CurrentLevel !== "day";
-    const canRollUp = q10CurrentLevel !== "year";
+    const q10State = olapFrontendState[10];
+    const q10Crumbs = ["All time", ...q10State.path.map((p) => p.label)];
+    const q10Breadcrumb = q10Crumbs.map((label, idx) =>
+      `<a href="#" onclick="olapBreadcrumbClick(10, ${idx}); return false;">${label}</a>`
+    ).join(" &gt; ");
+    const q10CityValue = q10State.filters.city_name || "";
     host.innerHTML = `
-      ${q10InputsHtml}
+      <input data-filter-key="city_name" type="text" placeholder="City name" value="${q10CityValue}" />
       <span class="muted">Current level: <b>${q10CurrentLevel}</b></span>
-      <button class="secondary" onclick="runQ10AtCurrentLevel()">Run</button>
-      <button onclick="runQ10DrillDown()" ${canDrillDown ? "" : "disabled"}>Drill down</button>
-      <button onclick="runQ10RollUp()" ${canRollUp ? "" : "disabled"}>Roll up</button>
+      <span class="muted">Path: ${q10Breadcrumb}</span>
+      <span class="muted">Click a row to drill down</span>
+      <button class="secondary" onclick="resetOlapPath(10)">Reset</button>
     `;
     return;
   }
   if (selectedQuestion === 11) {
-    const q11FilterKeys = filterKeys.filter((key) => key === "city_name");
-    const q11InputsHtml = q11FilterKeys.map((key) => {
-      const cfg = FILTER_FIELDS[key];
-      if (!cfg) {
-        return "";
-      }
-      return `<input data-filter-key="${key}" type="${cfg.type}" placeholder="${cfg.placeholder}" />`;
-    }).join("");
-    const canDrillDown = q11CurrentLevel !== "day";
-    const canRollUp = q11CurrentLevel !== "year";
+    const q11State = olapFrontendState[11];
+    const q11Crumbs = ["All time", ...q11State.path.map((p) => p.label)];
+    const q11Breadcrumb = q11Crumbs.map((label, idx) =>
+      `<a href="#" onclick="olapBreadcrumbClick(11, ${idx}); return false;">${label}</a>`
+    ).join(" &gt; ");
+    const q11CityValue = q11State.filters.city_name || "";
     host.innerHTML = `
-      ${q11InputsHtml}
+      <input data-filter-key="city_name" type="text" placeholder="City name" value="${q11CityValue}" />
       <span class="muted">Current level: <b>${q11CurrentLevel}</b></span>
-      <button class="secondary" onclick="runQ11AtCurrentLevel()">Run</button>
-      <button onclick="runQ11DrillDown()" ${canDrillDown ? "" : "disabled"}>Drill down</button>
-      <button onclick="runQ11RollUp()" ${canRollUp ? "" : "disabled"}>Roll up</button>
+      <span class="muted">Path: ${q11Breadcrumb}</span>
+      <span class="muted">Click a row to drill down</span>
+      <button class="secondary" onclick="resetOlapPath(11)">Reset</button>
     `;
     return;
   }
   if (selectedQuestion === 12) {
-    const q12FilterKeys = filterKeys.filter((key) => key === "product_code");
-    const q12InputsHtml = q12FilterKeys.map((key) => {
-      const cfg = FILTER_FIELDS[key];
-      if (!cfg) {
-        return "";
-      }
-      return `<input data-filter-key="${key}" type="${cfg.type}" placeholder="${cfg.placeholder}" />`;
-    }).join("");
-    const canDrillDown = q12CurrentLevel !== "day";
-    const canRollUp = q12CurrentLevel !== "year";
+    const q12State = olapFrontendState[12];
+    const q12Crumbs = ["All time", ...q12State.path.map((p) => p.label)];
+    const q12Breadcrumb = q12Crumbs.map((label, idx) =>
+      `<a href="#" onclick="olapBreadcrumbClick(12, ${idx}); return false;">${label}</a>`
+    ).join(" &gt; ");
+    const q12ProductValue = q12State.filters.product_code || "";
     host.innerHTML = `
-      ${q12InputsHtml}
+      <input data-filter-key="product_code" type="text" placeholder="Product code (e.g. MH001)" value="${q12ProductValue}" />
       <span class="muted">Current level: <b>${q12CurrentLevel}</b></span>
-      <button class="secondary" onclick="runQ12AtCurrentLevel()">Run</button>
-      <button onclick="runQ12DrillDown()" ${canDrillDown ? "" : "disabled"}>Drill down</button>
-      <button onclick="runQ12RollUp()" ${canRollUp ? "" : "disabled"}>Roll up</button>
+      <span class="muted">Path: ${q12Breadcrumb}</span>
+      <span class="muted">Click a row to drill down</span>
+      <button class="secondary" onclick="resetOlapPath(12)">Reset</button>
     `;
     return;
   }
   if (selectedQuestion === 13) {
-    const q13FilterKeys = filterKeys.filter((key) => key === "city_name" || key === "product_code");
-    const q13InputsHtml = q13FilterKeys.map((key) => {
-      const cfg = FILTER_FIELDS[key];
-      if (!cfg) {
-        return "";
-      }
-      return `<input data-filter-key="${key}" type="${cfg.type}" placeholder="${cfg.placeholder}" />`;
-    }).join("");
-    const canDrillDown = q13CurrentLevel !== "day";
-    const canRollUp = q13CurrentLevel !== "year";
+    const q13State = olapFrontendState[13];
+    const q13Crumbs = ["All time", ...q13State.path.map((p) => p.label)];
+    const q13Breadcrumb = q13Crumbs.map((label, idx) =>
+      `<a href="#" onclick="olapBreadcrumbClick(13, ${idx}); return false;">${label}</a>`
+    ).join(" &gt; ");
+    const q13CityValue = q13State.filters.city_name || "";
+    const q13ProductValue = q13State.filters.product_code || "";
     host.innerHTML = `
-      ${q13InputsHtml}
+      <input data-filter-key="city_name" type="text" placeholder="City name" value="${q13CityValue}" />
+      <input data-filter-key="product_code" type="text" placeholder="Product code (e.g. MH001)" value="${q13ProductValue}" />
       <span class="muted">Current level: <b>${q13CurrentLevel}</b></span>
-      <button class="secondary" onclick="runQ13AtCurrentLevel()">Run</button>
-      <button onclick="runQ13DrillDown()" ${canDrillDown ? "" : "disabled"}>Drill down</button>
-      <button onclick="runQ13RollUp()" ${canRollUp ? "" : "disabled"}>Roll up</button>
+      <span class="muted">Path: ${q13Breadcrumb}</span>
+      <span class="muted">Click a row to drill down</span>
+      <button class="secondary" onclick="resetOlapPath(13)">Reset</button>
     `;
     return;
   }
   if (selectedQuestion === 14) {
-    const q14FilterKeys = filterKeys.filter((key) => key === "store_code" || key === "product_code");
-    const q14InputsHtml = q14FilterKeys.map((key) => {
-      const cfg = FILTER_FIELDS[key];
-      if (!cfg) {
-        return "";
-      }
-      return `<input data-filter-key="${key}" type="${cfg.type}" placeholder="${cfg.placeholder}" />`;
-    }).join("");
-    const canDrillDown = q14CurrentLevel !== "day";
-    const canRollUp = q14CurrentLevel !== "year";
+    const q14State = olapFrontendState[14];
+    const q14Crumbs = ["All time", ...q14State.path.map((p) => p.label)];
+    const q14Breadcrumb = q14Crumbs.map((label, idx) =>
+      `<a href="#" onclick="olapBreadcrumbClick(14, ${idx}); return false;">${label}</a>`
+    ).join(" &gt; ");
+    const q14StoreValue = q14State.filters.store_code || "";
+    const q14ProductValue = q14State.filters.product_code || "";
     host.innerHTML = `
-      ${q14InputsHtml}
+      <input data-filter-key="store_code" type="text" placeholder="Store code (e.g. CH001)" value="${q14StoreValue}" />
+      <input data-filter-key="product_code" type="text" placeholder="Product code (e.g. MH001)" value="${q14ProductValue}" />
       <span class="muted">Current level: <b>${q14CurrentLevel}</b></span>
-      <button class="secondary" onclick="runQ14AtCurrentLevel()">Run</button>
-      <button onclick="runQ14DrillDown()" ${canDrillDown ? "" : "disabled"}>Drill down</button>
-      <button onclick="runQ14RollUp()" ${canRollUp ? "" : "disabled"}>Roll up</button>
+      <span class="muted">Path: ${q14Breadcrumb}</span>
+      <span class="muted">Click a row to drill down</span>
+      <button class="secondary" onclick="resetOlapPath(14)">Reset</button>
     `;
     return;
   }
@@ -557,6 +555,10 @@ function runQ14RollUp() {
 async function refreshCube() {
   const res = await fetch("/api/refresh-cube-data", { method: "POST" });
   const data = await res.json();
+  for (const qid of [10, 11, 12, 13, 14]) {
+    olapFrontendState[qid].rawRows = null;
+    olapFrontendState[qid].path = [];
+  }
   alert(data.message);
 }
 
@@ -571,11 +573,21 @@ function renderTable(payload) {
   }
 
   const isPivot = columns[0] === "row";
+  const isOlapInteractive = (selectedQuestion >= 10 && selectedQuestion <= 14) && !isPivot;
+  const currentLevelByQuestion = {
+    10: q10CurrentLevel,
+    11: q11CurrentLevel,
+    12: q12CurrentLevel,
+    13: q13CurrentLevel,
+    14: q14CurrentLevel,
+  };
+  const canDrillMore = isOlapInteractive && currentLevelByQuestion[selectedQuestion] !== "day";
   table.className = isPivot ? "pivot-table" : "";
 
   let html = "<thead><tr>" + columns.map(c => `<th>${c}</th>`).join("") + "</tr></thead><tbody>";
-  for (const r of rows) {
-    html += "<tr>" + columns.map((c, idx) => {
+  rows.forEach((r, rowIdx) => {
+    const rowClickAttr = canDrillMore ? ` onclick="handleOlapRowClick(${rowIdx})" style="cursor:pointer;" title="Click to drill down"` : "";
+    html += `<tr${rowClickAttr}>` + columns.map((c, idx) => {
       const val = r[c] ?? "";
       const isNum = typeof val === "number";
       const niceVal = isNum ? val.toLocaleString("en-US", { maximumFractionDigits: 2 }) : val;
@@ -585,7 +597,7 @@ function renderTable(payload) {
       ].filter(Boolean).join(" ");
       return `<td class="${cls}">${niceVal}</td>`;
     }).join("") + "</tr>";
-  }
+  });
   html += "</tbody>";
   table.innerHTML = html;
 }
@@ -629,8 +641,334 @@ function collectFilters() {
   return filters;
 }
 
+function getOlapLevelFromPath(path) {
+  if (path.length === 0) return "year";
+  if (path.length === 1) return "month";
+  return "day";
+}
+
+function aggregateQ10(rows, level) {
+  const grouped = new Map();
+  for (const r of rows) {
+    const year = Number(r.year);
+    const month = Number(r.month);
+    const day = Number(r.day);
+    const key = level === "year" ? `${year}` : level === "month" ? `${year}-${month}` : `${year}-${month}-${day}`;
+    const rec = grouped.get(key) || { year, month, day, total_quantity: 0, total_sales: 0 };
+    rec.total_quantity += Number(r.total_quantity || 0);
+    rec.total_sales += Number(r.total_sales || 0);
+    grouped.set(key, rec);
+  }
+  const out = Array.from(grouped.values()).sort((a, b) =>
+    a.year - b.year || (a.month || 0) - (b.month || 0) || (a.day || 0) - (b.day || 0)
+  );
+  if (level !== "day") {
+    let prev = null;
+    for (const rec of out) {
+      rec.previous_period_sales = prev;
+      rec.sales_change = rec.total_sales - (prev ?? 0);
+      rec.sales_change_pct = prev && prev !== 0 ? Number((((rec.total_sales - prev) / prev) * 100).toFixed(2)) : null;
+      prev = rec.total_sales;
+    }
+  }
+  if (level === "year") return out.map(({ year, total_quantity, total_sales, previous_period_sales, sales_change, sales_change_pct }) => ({ year, total_quantity, total_sales, previous_period_sales, sales_change, sales_change_pct }));
+  if (level === "month") return out.map(({ year, month, total_quantity, total_sales, previous_period_sales, sales_change, sales_change_pct }) => ({ year, month, total_quantity, total_sales, previous_period_sales, sales_change, sales_change_pct }));
+  return out.map(({ year, month, day, total_quantity, total_sales }) => ({ year, month, day, total_quantity, total_sales }));
+}
+
+function aggregateQ11(rows, level) {
+  const grouped = new Map();
+  for (const r of rows) {
+    const year = Number(r.year);
+    const month = Number(r.month);
+    const day = Number(r.day);
+    const city = String(r.city || "");
+    const keyPrefix = level === "year" ? `${year}` : level === "month" ? `${year}-${month}` : `${year}-${month}-${day}`;
+    const key = `${keyPrefix}|${city}`;
+    const rec = grouped.get(key) || { year, month, day, city, total_quantity: 0, total_sales: 0 };
+    rec.total_quantity += Number(r.total_quantity || 0);
+    rec.total_sales += Number(r.total_sales || 0);
+    grouped.set(key, rec);
+  }
+  const winnerByPeriod = new Map();
+  for (const rec of grouped.values()) {
+    const periodKey = level === "year" ? `${rec.year}` : level === "month" ? `${rec.year}-${rec.month}` : `${rec.year}-${rec.month}-${rec.day}`;
+    const current = winnerByPeriod.get(periodKey);
+    if (!current || rec.total_sales > current.total_sales || (rec.total_sales === current.total_sales && rec.city < current.city)) {
+      winnerByPeriod.set(periodKey, rec);
+    }
+  }
+  const out = Array.from(winnerByPeriod.values()).sort((a, b) =>
+    a.year - b.year || (a.month || 0) - (b.month || 0) || (a.day || 0) - (b.day || 0)
+  );
+  if (level === "year") return out.map(({ year, city, total_quantity, total_sales }) => ({ year, city, total_quantity, total_sales }));
+  if (level === "month") return out.map(({ year, month, city, total_quantity, total_sales }) => ({ year, month, city, total_quantity, total_sales }));
+  return out.map(({ year, month, day, city, total_quantity, total_sales }) => ({ year, month, day, city, total_quantity, total_sales }));
+}
+
+function aggregateQ12(rows, level) {
+  const grouped = new Map();
+  for (const r of rows) {
+    const year = Number(r.year);
+    const month = Number(r.month);
+    const day = Number(r.day);
+    const product_code = String(r.product_code || "");
+    const product_description = String(r.product_description || "");
+    const keyPrefix = level === "year" ? `${year}` : level === "month" ? `${year}-${month}` : `${year}-${month}-${day}`;
+    const key = `${keyPrefix}|${product_code}`;
+    const rec = grouped.get(key) || { year, month, day, product_code, product_description, total_quantity: 0, total_sales: 0 };
+    rec.total_quantity += Number(r.total_quantity || 0);
+    rec.total_sales += Number(r.total_sales || 0);
+    grouped.set(key, rec);
+  }
+  const winnerByPeriod = new Map();
+  for (const rec of grouped.values()) {
+    const periodKey = level === "year" ? `${rec.year}` : level === "month" ? `${rec.year}-${rec.month}` : `${rec.year}-${rec.month}-${rec.day}`;
+    const current = winnerByPeriod.get(periodKey);
+    if (
+      !current ||
+      rec.total_quantity > current.total_quantity ||
+      (rec.total_quantity === current.total_quantity && rec.total_sales > current.total_sales) ||
+      (rec.total_quantity === current.total_quantity && rec.total_sales === current.total_sales && rec.product_code < current.product_code)
+    ) {
+      winnerByPeriod.set(periodKey, rec);
+    }
+  }
+  const out = Array.from(winnerByPeriod.values()).sort((a, b) =>
+    a.year - b.year || (a.month || 0) - (b.month || 0) || (a.day || 0) - (b.day || 0)
+  );
+  if (level === "year") return out.map(({ year, product_code, product_description, total_quantity, total_sales }) => ({ year, product_code, product_description, total_quantity, total_sales }));
+  if (level === "month") return out.map(({ year, month, product_code, product_description, total_quantity, total_sales }) => ({ year, month, product_code, product_description, total_quantity, total_sales }));
+  return out.map(({ year, month, day, product_code, product_description, total_quantity, total_sales }) => ({ year, month, day, product_code, product_description, total_quantity, total_sales }));
+}
+
+function aggregateQ13(rows, level) {
+  const grouped = new Map();
+  for (const r of rows) {
+    const year = Number(r.year);
+    const month = Number(r.month);
+    const day = Number(r.day);
+    const city = String(r.city || "");
+    const keyPrefix = level === "year" ? `${year}` : level === "month" ? `${year}-${month}` : `${year}-${month}-${day}`;
+    const key = `${keyPrefix}|${city}`;
+    const rec = grouped.get(key) || { year, month, day, city, total_inventory: 0 };
+    rec.total_inventory += Number(r.total_inventory || 0);
+    grouped.set(key, rec);
+  }
+  const winnerByPeriod = new Map();
+  for (const rec of grouped.values()) {
+    const periodKey = level === "year" ? `${rec.year}` : level === "month" ? `${rec.year}-${rec.month}` : `${rec.year}-${rec.month}-${rec.day}`;
+    const current = winnerByPeriod.get(periodKey);
+    if (!current || rec.total_inventory > current.total_inventory || (rec.total_inventory === current.total_inventory && rec.city < current.city)) {
+      winnerByPeriod.set(periodKey, rec);
+    }
+  }
+  const out = Array.from(winnerByPeriod.values()).sort((a, b) =>
+    a.year - b.year || (a.month || 0) - (b.month || 0) || (a.day || 0) - (b.day || 0)
+  );
+  if (level === "year") return out.map(({ year, city, total_inventory }) => ({ year, city, total_inventory }));
+  if (level === "month") return out.map(({ year, month, city, total_inventory }) => ({ year, month, city, total_inventory }));
+  return out.map(({ year, month, day, city, total_inventory }) => ({ year, month, day, city, total_inventory }));
+}
+
+function aggregateQ14(rows, level) {
+  const grouped = new Map();
+  for (const r of rows) {
+    const year = Number(r.year);
+    const month = Number(r.month);
+    const day = Number(r.day);
+    const store_code = String(r.store_code || "");
+    const city = String(r.city || "");
+    const keyPrefix = level === "year" ? `${year}` : level === "month" ? `${year}-${month}` : `${year}-${month}-${day}`;
+    const key = `${keyPrefix}|${store_code}|${city}`;
+    const rec = grouped.get(key) || { year, month, day, store_code, city, total_inventory: 0 };
+    rec.total_inventory += Number(r.total_inventory || 0);
+    grouped.set(key, rec);
+  }
+  const winnerByPeriod = new Map();
+  for (const rec of grouped.values()) {
+    const periodKey = level === "year" ? `${rec.year}` : level === "month" ? `${rec.year}-${rec.month}` : `${rec.year}-${rec.month}-${rec.day}`;
+    const current = winnerByPeriod.get(periodKey);
+    if (!current || rec.total_inventory > current.total_inventory || (rec.total_inventory === current.total_inventory && rec.store_code < current.store_code)) {
+      winnerByPeriod.set(periodKey, rec);
+    }
+  }
+  const out = Array.from(winnerByPeriod.values()).sort((a, b) =>
+    a.year - b.year || (a.month || 0) - (b.month || 0) || (a.day || 0) - (b.day || 0)
+  );
+  if (level === "year") return out.map(({ year, store_code, city, total_inventory }) => ({ year, store_code, city, total_inventory }));
+  if (level === "month") return out.map(({ year, month, store_code, city, total_inventory }) => ({ year, month, store_code, city, total_inventory }));
+  return out.map(({ year, month, day, store_code, city, total_inventory }) => ({ year, month, day, store_code, city, total_inventory }));
+}
+
+function applyOlapContext(rows, path, filters) {
+  return rows.filter((r) => {
+    if (filters.city_name && !String(r.city || "").toLowerCase().includes(filters.city_name.toLowerCase())) {
+      return false;
+    }
+    if (filters.product_code && String(r.product_code || "") !== filters.product_code) {
+      return false;
+    }
+    if (filters.store_code && String(r.store_code || "") !== filters.store_code) {
+      return false;
+    }
+    if (path[0] && Number(r.year) !== Number(path[0].year)) return false;
+    if (path[1] && Number(r.month) !== Number(path[1].month)) return false;
+    return true;
+  });
+}
+
+function getOlapFiltersFromInputs(questionId) {
+  const filterOf = (key) => {
+    const input = document.querySelector(`#dynamicFilters [data-filter-key="${key}"]`);
+    return input ? input.value.trim() : "";
+  };
+  if (questionId === 10 || questionId === 11) {
+    return { city_name: filterOf("city_name") };
+  }
+  if (questionId === 12) {
+    return { product_code: filterOf("product_code") };
+  }
+  if (questionId === 13) {
+    return { city_name: filterOf("city_name"), product_code: filterOf("product_code") };
+  }
+  if (questionId === 14) {
+    return { store_code: filterOf("store_code"), product_code: filterOf("product_code") };
+  }
+  return {};
+}
+
+async function loadAllRowsForOlapQuestion(questionId, filters) {
+  let page = 1;
+  let totalPages = 1;
+  const rows = [];
+  do {
+    const baseParams = {
+      page: String(page),
+      page_size: String(OLAP_PAGE_SIZE),
+      time_level: "day",
+      olap_operation: "slice_dice",
+    };
+    const params = { ...baseParams, ...filters };
+    const qs = new URLSearchParams(params);
+    const res = await fetch(`/api/question/${questionId}?` + qs.toString());
+    if (!res.ok) {
+      const errText = await res.text();
+      throw new Error(`API ${res.status}: ${errText}`);
+    }
+    const data = await res.json();
+    rows.push(...(data.rows || []));
+    totalPages = Number(data.total_pages || 1);
+    page += 1;
+  } while (page <= totalPages);
+  return rows;
+}
+
+async function ensureOlapRawRows(questionId, filters) {
+  const state = olapFrontendState[questionId];
+  const filterKey = JSON.stringify(filters || {});
+  if (state.rawRows && state.filterKey === filterKey) {
+    state.filters = { ...(filters || {}) };
+    return;
+  }
+  state.rawRows = await loadAllRowsForOlapQuestion(questionId, filters || {});
+  state.filterKey = filterKey;
+  state.filters = { ...(filters || {}) };
+  state.path = [];
+}
+
+function olapBreadcrumbClick(questionId, crumbIndex) {
+  const state = olapFrontendState[questionId];
+  state.path = state.path.slice(0, Math.max(crumbIndex - 1, -1) + 1);
+  currentPage = 1;
+  runSelectedQuestion();
+}
+
+function resetOlapPath(questionId) {
+  olapFrontendState[questionId].path = [];
+  currentPage = 1;
+  runSelectedQuestion();
+}
+
+function handleOlapRowClick(rowIndex) {
+  if (selectedQuestion < 10 || selectedQuestion > 14) {
+    return;
+  }
+  const state = olapFrontendState[selectedQuestion];
+  const level = getOlapLevelFromPath(state.path);
+  if (level === "day") {
+    return;
+  }
+  const payload = window.__lastOlapPayload;
+  if (!payload || !payload.rows || !payload.rows[rowIndex]) {
+    return;
+  }
+  const row = payload.rows[rowIndex];
+  if (level === "year") {
+    state.path = [{ year: Number(row.year), label: String(row.year) }];
+    if (selectedQuestion === 10) q10CurrentLevel = "month";
+    if (selectedQuestion === 11) q11CurrentLevel = "month";
+    if (selectedQuestion === 12) q12CurrentLevel = "month";
+    if (selectedQuestion === 13) q13CurrentLevel = "month";
+    if (selectedQuestion === 14) q14CurrentLevel = "month";
+  } else if (level === "month") {
+    state.path = [
+      ...state.path.slice(0, 1),
+      { month: Number(row.month), label: `M${String(row.month).padStart(2, "0")}` },
+    ];
+    if (selectedQuestion === 10) q10CurrentLevel = "day";
+    if (selectedQuestion === 11) q11CurrentLevel = "day";
+    if (selectedQuestion === 12) q12CurrentLevel = "day";
+    if (selectedQuestion === 13) q13CurrentLevel = "day";
+    if (selectedQuestion === 14) q14CurrentLevel = "day";
+  }
+  currentPage = 1;
+  renderFiltersForQuestion();
+  runSelectedQuestion();
+}
+
 async function runSelectedQuestion() {
   try {
+    if (selectedQuestion >= 10 && selectedQuestion <= 14) {
+      const filters = getOlapFiltersFromInputs(selectedQuestion);
+      await ensureOlapRawRows(selectedQuestion, filters);
+      const state = olapFrontendState[selectedQuestion];
+      const level = getOlapLevelFromPath(state.path);
+      if (selectedQuestion === 10) q10CurrentLevel = level;
+      if (selectedQuestion === 11) q11CurrentLevel = level;
+      if (selectedQuestion === 12) q12CurrentLevel = level;
+      if (selectedQuestion === 13) q13CurrentLevel = level;
+      if (selectedQuestion === 14) q14CurrentLevel = level;
+
+      const contextualRows = applyOlapContext(state.rawRows || [], state.path, filters);
+      let rows = [];
+      if (selectedQuestion === 10) rows = aggregateQ10(contextualRows, level);
+      if (selectedQuestion === 11) rows = aggregateQ11(contextualRows, level);
+      if (selectedQuestion === 12) rows = aggregateQ12(contextualRows, level);
+      if (selectedQuestion === 13) rows = aggregateQ13(contextualRows, level);
+      if (selectedQuestion === 14) rows = aggregateQ14(contextualRows, level);
+      const totalRows = rows.length;
+      const pageSize = Number(document.getElementById("pageSize").value || "100");
+      const totalPages = totalRows ? Math.ceil(totalRows / pageSize) : 1;
+      currentPage = Math.min(currentPage, totalPages);
+      const start = (currentPage - 1) * pageSize;
+      const pagedRows = rows.slice(start, start + pageSize);
+      const payload = {
+        columns: pagedRows.length ? Object.keys(pagedRows[0]) : [],
+        rows: pagedRows,
+        page: currentPage,
+        page_size: pageSize,
+        total_rows: totalRows,
+        total_pages: totalPages,
+      };
+      window.__lastOlapPayload = payload;
+      document.getElementById("meta").innerHTML = `<b>Question ${selectedQuestion}</b> | total_rows=${payload.total_rows ?? 0}`;
+      document.getElementById("pageInfo").innerText = `Page ${payload.page}/${payload.total_pages}`;
+      renderFiltersForQuestion();
+      renderTable(payload);
+      return;
+    }
+
     const qs = new URLSearchParams(collectFilters());
     const res = await fetch(`/api/question/${selectedQuestion}?` + qs.toString());
     if (!res.ok) {
@@ -715,6 +1053,7 @@ runSelectedQuestion();
 @app.post("/api/refresh-cube-data")
 def refresh_cube_data() -> dict:
     load_dw_cube_data(server=DB_SERVER, user=DB_USER, password=DB_PASSWORD, port=DB_PORT)
+    invalidate_sales_olap_cache()
     return {"message": "Da refresh cube data thanh cong."}
 
 
@@ -1115,586 +1454,60 @@ def quick_question(
         return _to_table_payload(rows, page, page_size)
 
     if question_id == 10:
-        if olap_operation == "pivot":
-            sql = """
-                SELECT
-                    c.ten_thanh_pho AS [row],
-                    CONCAT(a.year, '-', RIGHT('00' + CAST(a.month AS VARCHAR(2)), 2)) AS [column],
-                    SUM(a.total_sales) AS total_sales
-                FROM dbo.agg_sales_city_month a
-                JOIN dbo.dim_thanh_pho c ON c.city_key = a.city_key
-                WHERE (%s = '' OR c.ten_thanh_pho LIKE %s)
-                GROUP BY c.ten_thanh_pho, a.year, a.month
-                ORDER BY [row], [column]
-            """
-            rows = _query_dw(sql, (city_name, f"%{city_name}%"))
-            return _to_table_payload(rows, page, page_size)
-        if olap_operation == "drill_down":
-            # year -> month -> day
-            effective_level = "month" if time_level == "year" else "day"
-        elif olap_operation == "roll_up":
-            # day -> month -> year
-            effective_level = "month" if time_level == "day" else "year"
-        else:
-            effective_level = time_level
-        if effective_level == "year":
-            sql = """
-                WITH sales_agg AS (
-                    SELECT
-                        a.year,
-                        SUM(a.total_quantity) AS total_quantity,
-                        SUM(a.total_sales) AS total_sales
-                    FROM dbo.agg_sales_city_month a
-                    JOIN dbo.dim_thanh_pho c ON c.city_key = a.city_key
-                    WHERE (%s = '' OR c.ten_thanh_pho LIKE %s)
-                    GROUP BY a.year
-                )
-                SELECT
-                    year,
-                    total_quantity,
-                    total_sales,
-                    LAG(total_sales) OVER (ORDER BY year) AS previous_period_sales,
-                    total_sales - COALESCE(LAG(total_sales) OVER (ORDER BY year), 0) AS sales_change,
-                    CASE
-                        WHEN COALESCE(LAG(total_sales) OVER (ORDER BY year), 0) = 0 THEN NULL
-                        ELSE ROUND(
-                            ((total_sales - LAG(total_sales) OVER (ORDER BY year))
-                                / LAG(total_sales) OVER (ORDER BY year)) * 100.0,
-                            2
-                        )
-                    END AS sales_change_pct
-                FROM sales_agg
-                ORDER BY year
-            """
-        elif effective_level == "month":
-            sql = """
-                WITH sales_agg AS (
-                    SELECT
-                        a.year,
-                        a.month,
-                        SUM(a.total_quantity) AS total_quantity,
-                        SUM(a.total_sales) AS total_sales
-                    FROM dbo.agg_sales_city_month a
-                    JOIN dbo.dim_thanh_pho c ON c.city_key = a.city_key
-                    WHERE (%s = '' OR c.ten_thanh_pho LIKE %s)
-                    GROUP BY a.year, a.month
-                )
-                SELECT
-                    year,
-                    month,
-                    total_quantity,
-                    total_sales,
-                    LAG(total_sales) OVER (ORDER BY year, month) AS previous_period_sales,
-                    total_sales - COALESCE(LAG(total_sales) OVER (ORDER BY year, month), 0) AS sales_change,
-                    CASE
-                        WHEN COALESCE(LAG(total_sales) OVER (ORDER BY year, month), 0) = 0 THEN NULL
-                        ELSE ROUND(
-                            ((total_sales - LAG(total_sales) OVER (ORDER BY year, month))
-                                / LAG(total_sales) OVER (ORDER BY year, month)) * 100.0,
-                            2
-                        )
-                    END AS sales_change_pct
-                FROM sales_agg
-                ORDER BY year, month
-            """
-        else:
-            sql = """
-                SELECT
-                    a.year,
-                    a.month,
-                    a.day,
-                    a.total_quantity,
-                    a.total_sales
-                FROM dbo.agg_sales_city_day a
-                JOIN dbo.dim_thanh_pho c ON c.city_key = a.city_key
-                WHERE (%s = '' OR c.ten_thanh_pho LIKE %s)
-                ORDER BY a.year, a.month, a.day
-            """
-        rows = _query_dw(sql, (city_name, f"%{city_name}%"))
+        sales_olap_service = get_sales_olap_service(
+            server=DB_SERVER, user=DB_USER, password=DB_PASSWORD, port=DB_PORT
+        )
+        rows = sales_olap_service.question_10(
+            city_name=city_name,
+            olap_operation=olap_operation,
+            time_level=time_level,
+        )
         return _to_table_payload(rows, page, page_size)
 
     if question_id == 11:
-        if olap_operation == "pivot":
-            sql = """
-                SELECT
-                    c.ten_thanh_pho AS [row],
-                    CONCAT(a.year, '-', RIGHT('00' + CAST(a.month AS VARCHAR(2)), 2)) AS [column],
-                    a.total_sales
-                FROM dbo.agg_sales_city_month a
-                JOIN dbo.dim_thanh_pho c ON c.city_key = a.city_key
-                WHERE (%s = '' OR c.ten_thanh_pho LIKE %s)
-                ORDER BY [row], [column]
-            """
-            rows = _query_dw(sql, (city_name, f"%{city_name}%"))
-            return _to_table_payload(rows, page, page_size)
-        if olap_operation == "drill_down":
-            effective_level = "month" if time_level == "year" else "day"
-        elif olap_operation == "roll_up":
-            effective_level = "month" if time_level == "day" else "year"
-        else:
-            effective_level = time_level
-
-        if effective_level == "year":
-            sql = """
-                WITH ranked_city AS (
-                    SELECT
-                        a.year,
-                        c.ten_thanh_pho AS city,
-                        SUM(a.total_quantity) AS total_quantity,
-                        SUM(a.total_sales) AS total_sales,
-                        ROW_NUMBER() OVER (
-                            PARTITION BY a.year
-                            ORDER BY SUM(a.total_sales) DESC, c.ten_thanh_pho
-                        ) AS rn
-                    FROM dbo.agg_sales_city_month a
-                    JOIN dbo.dim_thanh_pho c ON c.city_key = a.city_key
-                    WHERE (%s = '' OR c.ten_thanh_pho LIKE %s)
-                    GROUP BY a.year, c.ten_thanh_pho
-                )
-                SELECT
-                    year,
-                    city,
-                    total_quantity,
-                    total_sales
-                FROM ranked_city
-                WHERE rn = 1
-                ORDER BY year
-            """
-        elif effective_level == "month":
-            sql = """
-                WITH ranked_city AS (
-                    SELECT
-                        a.year,
-                        a.month,
-                        c.ten_thanh_pho AS city,
-                        a.total_quantity,
-                        a.total_sales,
-                        ROW_NUMBER() OVER (
-                            PARTITION BY a.year, a.month
-                            ORDER BY a.total_sales DESC, c.ten_thanh_pho
-                        ) AS rn
-                    FROM dbo.agg_sales_city_month a
-                    JOIN dbo.dim_thanh_pho c ON c.city_key = a.city_key
-                    WHERE (%s = '' OR c.ten_thanh_pho LIKE %s)
-                )
-                SELECT
-                    year,
-                    month,
-                    city,
-                    total_quantity,
-                    total_sales
-                FROM ranked_city
-                WHERE rn = 1
-                ORDER BY year, month
-            """
-        else:
-            sql = """
-                WITH ranked_city AS (
-                    SELECT
-                        a.year,
-                        a.month,
-                        a.day,
-                        c.ten_thanh_pho AS city,
-                        a.total_quantity,
-                        a.total_sales,
-                        ROW_NUMBER() OVER (
-                            PARTITION BY a.year, a.month, a.day
-                            ORDER BY a.total_sales DESC, c.ten_thanh_pho
-                        ) AS rn
-                    FROM dbo.agg_sales_city_day a
-                    JOIN dbo.dim_thanh_pho c ON c.city_key = a.city_key
-                    WHERE (%s = '' OR c.ten_thanh_pho LIKE %s)
-                )
-                SELECT
-                    year,
-                    month,
-                    day,
-                    city,
-                    total_quantity,
-                    total_sales
-                FROM ranked_city
-                WHERE rn = 1
-                ORDER BY year, month, day
-            """
-        rows = _query_dw(sql, (city_name, f"%{city_name}%"))
+        sales_olap_service = get_sales_olap_service(
+            server=DB_SERVER, user=DB_USER, password=DB_PASSWORD, port=DB_PORT
+        )
+        rows = sales_olap_service.question_11(
+            city_name=city_name,
+            olap_operation=olap_operation,
+            time_level=time_level,
+        )
         return _to_table_payload(rows, page, page_size)
 
     if question_id == 12:
-        if olap_operation == "pivot":
-            sql = """
-                SELECT
-                    p.ma_mat_hang AS [row],
-                    CONCAT(a.year, '-', RIGHT('00' + CAST(a.month AS VARCHAR(2)), 2)) AS [column],
-                    a.total_quantity
-                FROM dbo.agg_sales_product_month a
-                JOIN dbo.dim_san_pham p ON p.product_key = a.product_key
-                WHERE (%s = '' OR p.ma_mat_hang = %s)
-                ORDER BY [row], [column]
-            """
-            rows = _query_dw(sql, (product_code, product_code))
-            return _to_table_payload(rows, page, page_size)
-        if olap_operation == "drill_down":
-            effective_level = "month" if time_level == "year" else "day"
-        elif olap_operation == "roll_up":
-            effective_level = "month" if time_level == "day" else "year"
-        else:
-            effective_level = time_level
-
-        if effective_level == "year":
-            sql = """
-                WITH ranked_product AS (
-                    SELECT
-                        a.year,
-                        p.ma_mat_hang AS product_code,
-                        p.mo_ta AS product_description,
-                        SUM(a.total_quantity) AS total_quantity,
-                        SUM(a.total_sales) AS total_sales,
-                        ROW_NUMBER() OVER (
-                            PARTITION BY a.year
-                            ORDER BY SUM(a.total_quantity) DESC, SUM(a.total_sales) DESC, p.ma_mat_hang
-                        ) AS rn
-                    FROM dbo.agg_sales_product_month a
-                    JOIN dbo.dim_san_pham p ON p.product_key = a.product_key
-                    WHERE (%s = '' OR p.ma_mat_hang = %s)
-                    GROUP BY a.year, p.ma_mat_hang, p.mo_ta
-                )
-                SELECT
-                    year,
-                    product_code,
-                    product_description,
-                    total_quantity,
-                    total_sales
-                FROM ranked_product
-                WHERE rn = 1
-                ORDER BY year
-            """
-        elif effective_level == "month":
-            sql = """
-                WITH ranked_product AS (
-                    SELECT
-                        a.year,
-                        a.month,
-                        p.ma_mat_hang AS product_code,
-                        p.mo_ta AS product_description,
-                        a.total_quantity,
-                        a.total_sales,
-                        ROW_NUMBER() OVER (
-                            PARTITION BY a.year, a.month
-                            ORDER BY a.total_quantity DESC, a.total_sales DESC, p.ma_mat_hang
-                        ) AS rn
-                    FROM dbo.agg_sales_product_month a
-                    JOIN dbo.dim_san_pham p ON p.product_key = a.product_key
-                    WHERE (%s = '' OR p.ma_mat_hang = %s)
-                )
-                SELECT
-                    year,
-                    month,
-                    product_code,
-                    product_description,
-                    total_quantity,
-                    total_sales
-                FROM ranked_product
-                WHERE rn = 1
-                ORDER BY year, month
-            """
-        else:
-            sql = """
-                WITH sales_day AS (
-                    SELECT
-                        t.year,
-                        t.month,
-                        t.day,
-                        p.ma_mat_hang AS product_code,
-                        p.mo_ta AS product_description,
-                        SUM(f.so_luong_dat) AS total_quantity,
-                        SUM(f.tong_tien) AS total_sales
-                    FROM dbo.fact_don_hang f
-                    JOIN dbo.dim_thoi_gian t ON t.date_key = f.date_key
-                    JOIN dbo.dim_san_pham p ON p.product_key = f.product_key
-                    WHERE (%s = '' OR p.ma_mat_hang = %s)
-                    GROUP BY t.year, t.month, t.day, p.ma_mat_hang, p.mo_ta
-                ),
-                ranked_product AS (
-                    SELECT
-                        year,
-                        month,
-                        day,
-                        product_code,
-                        product_description,
-                        total_quantity,
-                        total_sales,
-                        ROW_NUMBER() OVER (
-                            PARTITION BY year, month, day
-                            ORDER BY total_quantity DESC, total_sales DESC, product_code
-                        ) AS rn
-                    FROM sales_day
-                )
-                SELECT
-                    year,
-                    month,
-                    day,
-                    product_code,
-                    product_description,
-                    total_quantity,
-                    total_sales
-                FROM ranked_product
-                WHERE rn = 1
-                ORDER BY year, month, day
-            """
-        rows = _query_dw(sql, (product_code, product_code))
+        sales_olap_service = get_sales_olap_service(
+            server=DB_SERVER, user=DB_USER, password=DB_PASSWORD, port=DB_PORT
+        )
+        rows = sales_olap_service.question_12(
+            product_code=product_code,
+            olap_operation=olap_operation,
+            time_level=time_level,
+        )
         return _to_table_payload(rows, page, page_size)
 
     if question_id == 13:
-        if olap_operation == "pivot":
-            sql = """
-                SELECT
-                    c.ten_thanh_pho AS [row],
-                    p.ma_mat_hang AS [column],
-                    a.total_inventory
-                FROM dbo.agg_inventory_city_product a
-                JOIN dbo.dim_thanh_pho c ON c.city_key = a.city_key
-                JOIN dbo.dim_san_pham p ON p.product_key = a.product_key
-                WHERE (%s = '' OR c.ten_thanh_pho LIKE %s)
-                  AND (%s = '' OR p.ma_mat_hang = %s)
-                ORDER BY [row], [column]
-            """
-            rows = _query_dw(sql, (city_name, f"%{city_name}%", product_code, product_code))
-            return _to_table_payload(rows, page, page_size)
-        if olap_operation == "drill_down":
-            effective_level = "month" if time_level == "year" else "day"
-        elif olap_operation == "roll_up":
-            effective_level = "month" if time_level == "day" else "year"
-        else:
-            effective_level = time_level
-
-        if effective_level == "year":
-            sql = """
-                WITH inv AS (
-                    SELECT
-                        t.year,
-                        c.ten_thanh_pho AS city,
-                        SUM(f.so_luong_ton) AS total_inventory
-                    FROM dbo.fact_kho_hang f
-                    JOIN dbo.dim_thoi_gian t ON t.date_key = f.date_key
-                    JOIN dbo.dim_cua_hang s ON s.store_key = f.store_key
-                    JOIN dbo.dim_thanh_pho c ON c.city_key = s.city_key
-                    JOIN dbo.dim_san_pham p ON p.product_key = f.product_key
-                    WHERE (%s = '' OR c.ten_thanh_pho LIKE %s)
-                      AND (%s = '' OR p.ma_mat_hang = %s)
-                    GROUP BY t.year, c.ten_thanh_pho
-                ),
-                ranked AS (
-                    SELECT
-                        year,
-                        city,
-                        total_inventory,
-                        ROW_NUMBER() OVER (PARTITION BY year ORDER BY total_inventory DESC, city) AS rn
-                    FROM inv
-                )
-                SELECT year, city, total_inventory
-                FROM ranked
-                WHERE rn = 1
-                ORDER BY year
-            """
-        elif effective_level == "month":
-            sql = """
-                WITH inv AS (
-                    SELECT
-                        t.year,
-                        t.month,
-                        c.ten_thanh_pho AS city,
-                        SUM(f.so_luong_ton) AS total_inventory
-                    FROM dbo.fact_kho_hang f
-                    JOIN dbo.dim_thoi_gian t ON t.date_key = f.date_key
-                    JOIN dbo.dim_cua_hang s ON s.store_key = f.store_key
-                    JOIN dbo.dim_thanh_pho c ON c.city_key = s.city_key
-                    JOIN dbo.dim_san_pham p ON p.product_key = f.product_key
-                    WHERE (%s = '' OR c.ten_thanh_pho LIKE %s)
-                      AND (%s = '' OR p.ma_mat_hang = %s)
-                    GROUP BY t.year, t.month, c.ten_thanh_pho
-                ),
-                ranked AS (
-                    SELECT
-                        year,
-                        month,
-                        city,
-                        total_inventory,
-                        ROW_NUMBER() OVER (PARTITION BY year, month ORDER BY total_inventory DESC, city) AS rn
-                    FROM inv
-                )
-                SELECT year, month, city, total_inventory
-                FROM ranked
-                WHERE rn = 1
-                ORDER BY year, month
-            """
-        else:
-            sql = """
-                WITH inv AS (
-                    SELECT
-                        t.year,
-                        t.month,
-                        t.day,
-                        c.ten_thanh_pho AS city,
-                        SUM(f.so_luong_ton) AS total_inventory
-                    FROM dbo.fact_kho_hang f
-                    JOIN dbo.dim_thoi_gian t ON t.date_key = f.date_key
-                    JOIN dbo.dim_cua_hang s ON s.store_key = f.store_key
-                    JOIN dbo.dim_thanh_pho c ON c.city_key = s.city_key
-                    JOIN dbo.dim_san_pham p ON p.product_key = f.product_key
-                    WHERE (%s = '' OR c.ten_thanh_pho LIKE %s)
-                      AND (%s = '' OR p.ma_mat_hang = %s)
-                    GROUP BY t.year, t.month, t.day, c.ten_thanh_pho
-                ),
-                ranked AS (
-                    SELECT
-                        year,
-                        month,
-                        day,
-                        city,
-                        total_inventory,
-                        ROW_NUMBER() OVER (PARTITION BY year, month, day ORDER BY total_inventory DESC, city) AS rn
-                    FROM inv
-                )
-                SELECT year, month, day, city, total_inventory
-                FROM ranked
-                WHERE rn = 1
-                ORDER BY year, month, day
-            """
-        rows = _query_dw(sql, (city_name, f"%{city_name}%", product_code, product_code))
+        sales_olap_service = get_sales_olap_service(
+            server=DB_SERVER, user=DB_USER, password=DB_PASSWORD, port=DB_PORT
+        )
+        rows = sales_olap_service.question_13(
+            city_name=city_name,
+            product_code=product_code,
+            olap_operation=olap_operation,
+            time_level=time_level,
+        )
         return _to_table_payload(rows, page, page_size)
 
     if question_id == 14:
-        if olap_operation == "pivot":
-            sql = """
-                SELECT
-                    s.ma_cua_hang AS [row],
-                    p.ma_mat_hang AS [column],
-                    a.total_inventory
-                FROM dbo.agg_inventory_store_product a
-                JOIN dbo.dim_cua_hang s ON s.store_key = a.store_key
-                JOIN dbo.dim_san_pham p ON p.product_key = a.product_key
-                WHERE (%s = '' OR s.ma_cua_hang = %s)
-                  AND (%s = '' OR p.ma_mat_hang = %s)
-                ORDER BY [row], [column]
-            """
-            rows = _query_dw(sql, (store_code, store_code, product_code, product_code))
-            return _to_table_payload(rows, page, page_size)
-        if olap_operation == "drill_down":
-            effective_level = "month" if time_level == "year" else "day"
-        elif olap_operation == "roll_up":
-            effective_level = "month" if time_level == "day" else "year"
-        else:
-            effective_level = time_level
-
-        if effective_level == "year":
-            sql = """
-                WITH inv AS (
-                    SELECT
-                        t.year,
-                        s.ma_cua_hang AS store_code,
-                        c.ten_thanh_pho AS city,
-                        SUM(f.so_luong_ton) AS total_inventory
-                    FROM dbo.fact_kho_hang f
-                    JOIN dbo.dim_thoi_gian t ON t.date_key = f.date_key
-                    JOIN dbo.dim_cua_hang s ON s.store_key = f.store_key
-                    JOIN dbo.dim_thanh_pho c ON c.city_key = s.city_key
-                    JOIN dbo.dim_san_pham p ON p.product_key = f.product_key
-                    WHERE (%s = '' OR s.ma_cua_hang = %s)
-                      AND (%s = '' OR p.ma_mat_hang = %s)
-                    GROUP BY t.year, s.ma_cua_hang, c.ten_thanh_pho
-                ),
-                ranked AS (
-                    SELECT
-                        year,
-                        store_code,
-                        city,
-                        total_inventory,
-                        ROW_NUMBER() OVER (
-                            PARTITION BY year
-                            ORDER BY total_inventory DESC, store_code
-                        ) AS rn
-                    FROM inv
-                )
-                SELECT year, store_code, city, total_inventory
-                FROM ranked
-                WHERE rn = 1
-                ORDER BY year
-            """
-        elif effective_level == "month":
-            sql = """
-                WITH inv AS (
-                    SELECT
-                        t.year,
-                        t.month,
-                        s.ma_cua_hang AS store_code,
-                        c.ten_thanh_pho AS city,
-                        SUM(f.so_luong_ton) AS total_inventory
-                    FROM dbo.fact_kho_hang f
-                    JOIN dbo.dim_thoi_gian t ON t.date_key = f.date_key
-                    JOIN dbo.dim_cua_hang s ON s.store_key = f.store_key
-                    JOIN dbo.dim_thanh_pho c ON c.city_key = s.city_key
-                    JOIN dbo.dim_san_pham p ON p.product_key = f.product_key
-                    WHERE (%s = '' OR s.ma_cua_hang = %s)
-                      AND (%s = '' OR p.ma_mat_hang = %s)
-                    GROUP BY t.year, t.month, s.ma_cua_hang, c.ten_thanh_pho
-                ),
-                ranked AS (
-                    SELECT
-                        year,
-                        month,
-                        store_code,
-                        city,
-                        total_inventory,
-                        ROW_NUMBER() OVER (
-                            PARTITION BY year, month
-                            ORDER BY total_inventory DESC, store_code
-                        ) AS rn
-                    FROM inv
-                )
-                SELECT year, month, store_code, city, total_inventory
-                FROM ranked
-                WHERE rn = 1
-                ORDER BY year, month
-            """
-        else:
-            sql = """
-                WITH inv AS (
-                    SELECT
-                        t.year,
-                        t.month,
-                        t.day,
-                        s.ma_cua_hang AS store_code,
-                        c.ten_thanh_pho AS city,
-                        SUM(f.so_luong_ton) AS total_inventory
-                    FROM dbo.fact_kho_hang f
-                    JOIN dbo.dim_thoi_gian t ON t.date_key = f.date_key
-                    JOIN dbo.dim_cua_hang s ON s.store_key = f.store_key
-                    JOIN dbo.dim_thanh_pho c ON c.city_key = s.city_key
-                    JOIN dbo.dim_san_pham p ON p.product_key = f.product_key
-                    WHERE (%s = '' OR s.ma_cua_hang = %s)
-                      AND (%s = '' OR p.ma_mat_hang = %s)
-                    GROUP BY t.year, t.month, t.day, s.ma_cua_hang, c.ten_thanh_pho
-                ),
-                ranked AS (
-                    SELECT
-                        year,
-                        month,
-                        day,
-                        store_code,
-                        city,
-                        total_inventory,
-                        ROW_NUMBER() OVER (
-                            PARTITION BY year, month, day
-                            ORDER BY total_inventory DESC, store_code
-                        ) AS rn
-                    FROM inv
-                )
-                SELECT year, month, day, store_code, city, total_inventory
-                FROM ranked
-                WHERE rn = 1
-                ORDER BY year, month, day
-            """
-        rows = _query_dw(sql, (store_code, store_code, product_code, product_code))
+        sales_olap_service = get_sales_olap_service(
+            server=DB_SERVER, user=DB_USER, password=DB_PASSWORD, port=DB_PORT
+        )
+        rows = sales_olap_service.question_14(
+            store_code=store_code,
+            product_code=product_code,
+            olap_operation=olap_operation,
+            time_level=time_level,
+        )
         return _to_table_payload(rows, page, page_size)
 
     return {"columns": [], "rows": [], "page": 1, "page_size": page_size, "total_rows": 0, "total_pages": 1}
