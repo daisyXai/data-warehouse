@@ -765,3 +765,157 @@ def load_dw_cube_data(
     )
 
     conn.close()
+
+
+def build_dw_metadata(
+    server: str = "127.0.0.1",
+    user: str = "sa",
+    password: str = "YourStrong!Pass123",
+    port: int = 1434,
+    target_db: str = "DWBase",
+) -> None:
+    """
+    Tao bang metadata cho cac bang DIM/FACT trong DWBase va seed du lieu mau.
+    """
+    master_conn = pymssql.connect(
+        server=server,
+        user=user,
+        password=password,
+        port=port,
+        database="master",
+        autocommit=True,
+    )
+    master_cursor = master_conn.cursor()
+    master_cursor.execute(
+        f"""
+        IF DB_ID(N'{target_db}') IS NULL
+            CREATE DATABASE [{target_db}]
+        """
+    )
+    master_conn.close()
+
+    conn = pymssql.connect(
+        server=server,
+        user=user,
+        password=password,
+        port=port,
+        database=target_db,
+        autocommit=True,
+    )
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        IF OBJECT_ID(N'dbo.metadata_tables', N'U') IS NULL
+        BEGIN
+            CREATE TABLE dbo.metadata_tables (
+                id INT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+                table_name VARCHAR(255) NOT NULL UNIQUE,
+                table_type VARCHAR(20) NOT NULL
+                    CHECK (table_type IN ('dim', 'fact')),
+                description NVARCHAR(MAX) NULL
+            )
+        END
+        """
+    )
+    cursor.execute(
+        """
+        IF OBJECT_ID(N'dbo.metadata_columns', N'U') IS NULL
+        BEGIN
+            CREATE TABLE dbo.metadata_columns (
+                id INT IDENTITY(1,1) NOT NULL PRIMARY KEY,
+                table_id INT NOT NULL,
+                column_name VARCHAR(255) NOT NULL,
+                is_primary_key BIT NOT NULL DEFAULT 0,
+                is_foreign_key BIT NOT NULL DEFAULT 0,
+                description NVARCHAR(MAX) NULL,
+                CONSTRAINT fk_metadata_columns_metadata_tables
+                    FOREIGN KEY (table_id) REFERENCES dbo.metadata_tables(id)
+            )
+        END
+        """
+    )
+
+    cursor.execute(
+        """
+        MERGE dbo.metadata_tables AS T
+        USING (
+            SELECT table_name, table_type, description
+            FROM (VALUES
+                ('dim_thoi_gian', 'dim', N'Bang dim thoi gian'),
+                ('dim_thanh_pho', 'dim', N'Bang dim thanh pho'),
+                ('dim_cua_hang', 'dim', N'Bang dim cua hang'),
+                ('dim_san_pham', 'dim', N'Bang dim san pham'),
+                ('dim_khach_hang', 'dim', N'Bang dim khach hang'),
+                ('fact_don_hang', 'fact', N'Bang fact don hang'),
+                ('fact_kho_hang', 'fact', N'Bang fact kho hang')
+            ) AS seed(table_name, table_type, description)
+        ) AS S
+        ON T.table_name = S.table_name
+        WHEN MATCHED THEN
+            UPDATE SET
+                T.table_type = S.table_type,
+                T.description = S.description
+        WHEN NOT MATCHED THEN
+            INSERT (table_name, table_type, description)
+            VALUES (S.table_name, S.table_type, S.description);
+        """
+    )
+
+    cursor.execute("DELETE FROM dbo.metadata_columns")
+    cursor.execute(
+        """
+        INSERT INTO dbo.metadata_columns (table_id, column_name, is_primary_key, is_foreign_key, description)
+        SELECT mt.id, seed.column_name, seed.is_primary_key, seed.is_foreign_key, seed.description
+        FROM dbo.metadata_tables mt
+        JOIN (
+            VALUES
+                ('dim_thoi_gian', 'date_key', 1, 0, N'Khoa chinh cua bang dim_thoi_gian'),
+                ('dim_thoi_gian', 'full_date', 0, 0, N'Ngay day du'),
+                ('dim_thoi_gian', 'day', 0, 0, N'Ngay trong thang'),
+                ('dim_thoi_gian', 'month', 0, 0, N'Thang'),
+                ('dim_thoi_gian', 'quarter', 0, 0, N'Quy'),
+                ('dim_thoi_gian', 'year', 0, 0, N'Nam'),
+                ('dim_thoi_gian', 'day_of_week', 0, 0, N'Thu trong tuan'),
+                ('dim_thoi_gian', 'is_weekend', 0, 0, N'Co phai cuoi tuan khong'),
+                ('dim_thanh_pho', 'city_key', 1, 0, N'Khoa chinh cua bang dim_thanh_pho'),
+                ('dim_thanh_pho', 'ma_thanh_pho', 0, 0, N'Ma thanh pho nghiep vu'),
+                ('dim_thanh_pho', 'ten_thanh_pho', 0, 0, N'Ten thanh pho'),
+                ('dim_thanh_pho', 'bang', 0, 0, N'Ten bang'),
+                ('dim_thanh_pho', 'dia_chi_vp', 0, 0, N'Dia chi van phong dai dien'),
+                ('dim_cua_hang', 'store_key', 1, 0, N'Khoa chinh cua bang dim_cua_hang'),
+                ('dim_cua_hang', 'ma_cua_hang', 0, 0, N'Ma cua hang nghiep vu'),
+                ('dim_cua_hang', 'so_dien_thoai', 0, 0, N'So dien thoai cua hang'),
+                ('dim_cua_hang', 'city_key', 0, 1, N'Khoa ngoai den dim_thanh_pho'),
+                ('dim_san_pham', 'product_key', 1, 0, N'Khoa chinh cua bang dim_san_pham'),
+                ('dim_san_pham', 'ma_mat_hang', 0, 0, N'Ma mat hang nghiep vu'),
+                ('dim_san_pham', 'mo_ta', 0, 0, N'Mo ta mat hang'),
+                ('dim_san_pham', 'kich_co', 0, 0, N'Kich co mat hang'),
+                ('dim_san_pham', 'trong_luong', 0, 0, N'Trong luong mat hang'),
+                ('dim_san_pham', 'gia_niem_yet', 0, 0, N'Gia niem yet'),
+                ('dim_khach_hang', 'customer_key', 1, 0, N'Khoa chinh cua bang dim_khach_hang'),
+                ('dim_khach_hang', 'ma_khach_hang', 0, 0, N'Ma khach hang nghiep vu'),
+                ('dim_khach_hang', 'ten_khach_hang', 0, 0, N'Ten khach hang'),
+                ('dim_khach_hang', 'city_key', 0, 1, N'Khoa ngoai den dim_thanh_pho'),
+                ('dim_khach_hang', 'ngay_dat_hang_dau_tien', 0, 0, N'Ngay dat hang dau tien'),
+                ('dim_khach_hang', 'customer_type', 0, 0, N'Loai khach hang'),
+                ('fact_don_hang', 'fact_order_id', 1, 0, N'Khoa chinh cua bang fact_don_hang'),
+                ('fact_don_hang', 'date_key', 0, 1, N'Khoa ngoai den dim_thoi_gian'),
+                ('fact_don_hang', 'customer_key', 0, 1, N'Khoa ngoai den dim_khach_hang'),
+                ('fact_don_hang', 'product_key', 0, 1, N'Khoa ngoai den dim_san_pham'),
+                ('fact_don_hang', 'store_key', 0, 1, N'Khoa ngoai den dim_cua_hang'),
+                ('fact_don_hang', 'ma_don_hang', 0, 0, N'Ma don hang nghiep vu'),
+                ('fact_don_hang', 'so_luong_dat', 0, 0, N'So luong dat'),
+                ('fact_don_hang', 'gia_dat', 0, 0, N'Gia dat'),
+                ('fact_don_hang', 'tong_tien', 0, 0, N'Tong tien tinh toan'),
+                ('fact_kho_hang', 'fact_inventory_id', 1, 0, N'Khoa chinh cua bang fact_kho_hang'),
+                ('fact_kho_hang', 'date_key', 0, 1, N'Khoa ngoai den dim_thoi_gian'),
+                ('fact_kho_hang', 'store_key', 0, 1, N'Khoa ngoai den dim_cua_hang'),
+                ('fact_kho_hang', 'product_key', 0, 1, N'Khoa ngoai den dim_san_pham'),
+                ('fact_kho_hang', 'so_luong_ton', 0, 0, N'So luong ton')
+        ) AS seed(table_name, column_name, is_primary_key, is_foreign_key, description)
+            ON mt.table_name = seed.table_name
+        """
+    )
+
+    conn.close()

@@ -7,6 +7,7 @@ import pymssql
 
 from dw_builder import (
     build_dw_from_idbase,
+    build_dw_metadata,
     ensure_dw_cube_tables,
     load_dw_cube_data,
     load_idb_into_dw,
@@ -1777,6 +1778,7 @@ def main(
     should_build_dw_cubes: bool = False,
     should_load_dw_cube_data: bool = False,
     should_seed_dw_demo: bool = False,
+    should_build_metadata: bool = False,
 ) -> None:
     server = "127.0.0.1"
     user = "sa"
@@ -1822,6 +1824,10 @@ def main(
         run_all_dw_demo_seed(server=server, user=user, password=password, port=port)
         print("Da chay seed demo: DIM + FACT + cube trong DWBase (khong can IDBase).")
 
+    if should_build_metadata:
+        build_dw_metadata(server=server, user=user, password=password, port=port)
+        print("Da tao bang metadata_tables, metadata_columns va seed metadata trong DWBase.")
+
     print("Ung dung dang chay. Nhan Ctrl+C de dung.")
     while RUNNING:
         time.sleep(1)
@@ -1866,6 +1872,11 @@ if __name__ == "__main__":
         action="store_true",
         help="Chay FastAPI dashboard OLAP.",
     )
+    parser.add_argument(
+        "--build-metadata",
+        action="store_true",
+        help="Tao metadata_tables + metadata_columns va seed cho 5 bang dim, 2 bang fact trong DWBase.",
+    )
     args = parser.parse_args()
     #### specific add 
 
@@ -1882,5 +1893,6 @@ if __name__ == "__main__":
         should_build_dw_cubes=args.build_dw_cubes,
         should_load_dw_cube_data=args.load_dw_cube_data,
         should_seed_dw_demo=args.seed_dw_demo,
+        should_build_metadata=args.build_metadata,
     )
 
